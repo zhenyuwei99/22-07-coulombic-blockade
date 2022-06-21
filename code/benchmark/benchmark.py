@@ -13,6 +13,7 @@ import os
 import mdpy as md
 import numpy as np
 import cupy as cp
+from cupy.cuda.nvtx import RangePush, RangePop
 from mdpy.unit import *
 from mdpy.environment import *
 from visualize import visualize_2d, visualize_3d
@@ -106,10 +107,9 @@ def solve_equation(
     device_relative_permittivity_map = cp.array(relative_permittivity_map, CUPY_FLOAT)
     constraint.set_relative_permittivity_map(device_relative_permittivity_map)
     # Update
-    s = time.time()
+    RangePush("Update FDPE")
     constraint.update()
-    e = time.time()
-    print("Run update for %s s" % (e - s))
+    RangePop()
     coulombic_electric_potential_map = (
         constraint.device_coulombic_electric_potential_map.get()  # [1:-1, 1:-1, 1:-1]
     )
@@ -177,7 +177,7 @@ if __name__ == "__main__":
             box_size,
             grid_width,
         )
-    if True:  # Visualize
+    if not True:  # Visualize
         visualize_3d(job_name)
     if not True:
         visualize_2d(job_name)
