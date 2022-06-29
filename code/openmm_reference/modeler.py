@@ -51,22 +51,21 @@ class Modeler:
                 file=f,
             )
 
-    def clean_cache(self):
-        os.system("rm -rf %s/*.log" % out_dir)
-        os.system("rm -rf %s/*.tcl" % out_dir)
-
     def model(self):
+        os.system("rm -rf %s/*.pdb" % out_dir)
+        os.system("rm -rf %s/*.psf" % out_dir)
         self._generate_tcl_file()
         os.system(
             "cd %s && vmd -dispdev text -e %s" % (self._out_dir, self._tcl_file_name)
         )
-        self.clean_cache()
+        os.system("rm -rf %s/*.log" % out_dir)
+        os.system("rm -rf %s/*.tcl" % out_dir)
 
 
 if __name__ == "__main__":
     # Parameter
     template_file_path = os.path.join(data_dir, "modeler_template.tcl")
-    box_size = [10, 10, 5]
+    box_size = [20, 20, 5]
     pore_radius = 5
     solvation_box_height = 50
     ion_concentration = 0.15

@@ -81,11 +81,4 @@ file delete $sio2_solvated_file_name.psf
 file rename $sio2_ionized_file_name.pdb $final_file_name.pdb
 file rename $sio2_ionized_file_name.psf $final_file_name.psf
 
-file delete $sio2_ionized_file_name.pdb
-file delete $sio2_ionized_file_name.psf
-
-# Load result
-mol delete all
-mol load psf $final_file_name.psf pdb $final_file_name.pdb
-
 exit
