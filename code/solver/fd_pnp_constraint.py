@@ -156,21 +156,25 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                         charge_density, (grid_x, grid_y, grid_z), charge_xyz
                     )
 
-    def _solve_poisson_equation(self, max_iteration=500, error_tolerance=5e-9):
+    def _solve_poisson_equation(self, max_iteration=500, error_tolerance=5e-7):
         inv_2x, inv_2y, inv_2z = 0.5 / self._grid.grid_width
         inv_x2, inv_y2, inv_z2 = (1 / self._grid.grid_width) ** 2
         inv_k0 = 1 / (4 * np.pi * EPSILON0.value)
         denominator = 2 * (inv_x2 + inv_y2 + inv_z2)
+        x_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        x_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        y_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        y_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        z_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        z_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         for i in range(max_iteration):
             # X Neumann condition
-            x_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
             x_plus[:-1, :, :] = self._grid.field.electric_potential[2:-1, 1:-1, 1:-1]
             x_plus[-1, :, :] = (
                 self._grid.field.electric_potential[-2, 1:-1, 1:-1]
                 + self._grid.field.electric_potential[-1, 1:-1, 1:-1]
                 * self._grid.grid_width[0]
             )
-            x_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
             x_minus[1:, :, :] = self._grid.field.electric_potential[1:-2, 1:-1, 1:-1]
             x_minus[0, :, :] = (
                 self._grid.field.electric_potential[1, 1:-1, 1:-1]
@@ -178,14 +182,12 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 * self._grid.grid_width[0]
             )
             # Y Neumann
-            y_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-            y_plus[:, :-1, :] += self._grid.field.electric_potential[1:-1, 2:-1, 1:-1]
-            y_plus[:, -1, :] += (
+            y_plus[:, :-1, :] = self._grid.field.electric_potential[1:-1, 2:-1, 1:-1]
+            y_plus[:, -1, :] = (
                 self._grid.field.electric_potential[1:-1, -2, 1:-1]
                 + self._grid.field.electric_potential[1:-1, -1, 1:-1]
                 * self._grid.grid_width[1]
             )
-            y_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
             y_minus[:, 1:, :] = self._grid.field.electric_potential[1:-1, 1:-2, 1:-1]
             y_minus[:, 0, :] = (
                 self._grid.field.electric_potential[1:-1, 1, 1:-1]
@@ -218,24 +220,25 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 * inv_k0
             )
             new *= 1 / denominator
-            print(
-                cp.max(
-                    cp.abs(self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] - new)
-                )
-            )
-            self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = (
+            new = (
                 0.01 * self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
                 + 0.99 * new
             )
+            if (
+                i % 25 == 0
+                and cp.max(
+                    cp.abs(self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] - new)
+                )
+                <= error_tolerance
+            ):
+                self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = new
+                return i, cp.max(
+                    cp.abs(self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] - new)
+                )
+            self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = new
 
-    @staticmethod
     def _solve_nernst_plank_equation_kernel(
-        grid_width,
-        diffusion_coefficient,
-        exclusion_potential_energy,
-        electric_potential_energy,
-        concentration_boundary,
-        concentration,
+        self, max_iteration=500, error_tolerance=5e-7
     ):
         pass
 
@@ -259,7 +262,10 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             "charge_density", charge_density / cp.prod(self._grid.device_grid_width)
         )
         self._grid.check_requirement()
-        self._solve_poisson_equation()
+        RangePush("Solve poisson")
+        iteration, error = self._solve_poisson_equation()
+        RangePop()
+        print(iteration, error)
 
     @property
     def grid(self) -> Grid:
