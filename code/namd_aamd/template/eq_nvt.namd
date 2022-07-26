@@ -1,0 +1,77 @@
+# template config file for minimizing system
+# Argument:
+# - input_prefix
+# - output_prefix
+# - output_freq
+# - num_step
+# - time_step
+
+set str_prefix ./str/str
+set input_prefix %s
+set output_prefix %s
+set output_freq %d
+set num_step %d
+set time_step %.5f
+
+# Input data
+
+structure ./str/str.psf
+coordinates ./str/str.pdb
+binCoordinates ${input_prefix}.restart.coor
+binVelocities ${input_prefix}.restart.vel
+
+outputName $output_prefix
+
+# system dimensions
+cellBasisVector1 %.5f %.5f %.5f
+cellBasisVector2 %.5f %.5f %.5f
+cellBasisVector3 %.5f %.5f %.5f
+cellOrigin %.5f %.5f %.5f
+
+# parameters
+parameters ./forcefield/sin.par
+parameters ./forcefield/water.par
+paraTypeCharmm on
+exclude scaled1-4
+1-4scaling 1
+
+switching on
+switchDist 10
+cutoff 12
+pairListDist 14
+
+# integraion
+numsteps $num_step
+timestep $time_step
+nonBondedFreq 2
+fullElectFrequency 4
+stepsPerCycle 20
+
+langevin on
+langevinTemp 295
+
+# output
+binaryOutput yes
+binaryRestart yes
+wrapAll yes
+wrapNearest yes
+comMotion yes
+
+outputEnergies $output_freq
+outputPressure $output_freq
+outputTiming $output_freq
+xstFreq $output_freq
+dcdFreq $output_freq
+restartFreq $output_freq
+
+# electrostatics
+pme on
+pmeGridSizeX 96
+pmeGridSizeY 96
+pmeGridSizeZ 192
+
+# external forces
+constraints on
+consKCol B
+consRef ${str_prefix}_restrain.pdb
+consKFile ${str_prefix}_restrain.pdb
