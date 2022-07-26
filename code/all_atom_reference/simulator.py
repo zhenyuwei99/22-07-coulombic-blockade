@@ -32,6 +32,9 @@ class Simulator:
         self._out_dir = out_dir
         self._pdb_file_path = os.path.join(self._str_dir, str_name + ".pdb")
         self._psf_file_path = os.path.join(self._str_dir, str_name + ".psf")
+        self._restrain_pdb_file_path = os.path.join(
+            self._str_dir, str_name + "_restrain.pdb"
+        )
         # Other attributes
         self._platform = openmm.Platform.getPlatformByName("CUDA")
         self._platform.setPropertyDefaultValue("DeviceIndex", "%d" % cuda_index)
@@ -46,12 +49,36 @@ class Simulator:
 
         self._cur_positions = self._pdb.getPositions()
         self._cur_velocities = None
+        self._parse_restrain_file()
+
+    def _parse_restrain_file(self):
+        restrain_constant = []
+        with open(self._restrain_pdb_file_path, "r") as f:
+            line = f.readline()
+            index = 0
+            while line:
+                line = f.readline()
+                index += 1
+                restrain_constant.append(float(line[61:67]))
+                if restrain_constant[-1] == 0:
+                    break
+        self._restrain_constant = (
+            np.array(restrain_constant[:-1])
+            * (unit.kilocalorie_per_mole / unit.angstrom**2)
+            / (unit.kilojoule_per_mole / unit.nanometer**2)
+        )
+        self._restrain_index = np.array(list(range(index - 1)), np.int32)
+        self._restrain_origin = (
+            self._pdb.getPositions(asNumpy=True)[:index, :] / unit.nanometer
+        )
+        self._num_restrained_particles = index - 1
 
     def _create_out_dir(self, prefix: str):
         out_dir = os.path.join(self._out_dir, prefix)
         if os.path.exists(out_dir):
-            shutil.rmtree(out_dir)
-        os.mkdir(out_dir)
+            os.system("rm -rf %s/*" % out_dir)
+        else:
+            os.mkdir(out_dir)
         return out_dir
 
     def _create_system(self) -> openmm.System:
@@ -68,7 +95,25 @@ class Simulator:
         # Set periodic angle
         angle_force = system.getForce(1)
         angle_force.setUsesPeriodicBoundaryConditions(True)
-
+        # Set restrain
+        restrain_force = openmm.CustomExternalForce(
+            "k*periodicdistance(x, y, z, x0, y0, z0)^2"
+        )
+        restrain_force.addPerParticleParameter("k")
+        restrain_force.addPerParticleParameter("x0")
+        restrain_force.addPerParticleParameter("y0")
+        restrain_force.addPerParticleParameter("z0")
+        for i in range(self._num_restrained_particles):
+            restrain_force.addParticle(
+                i,
+                [
+                    self._restrain_constant[i],
+                    self._restrain_origin[i, 0],
+                    self._restrain_origin[i, 1],
+                    self._restrain_origin[i, 2],
+                ],
+            )
+        system.addForce(restrain_force)
         return system
 
     def _dump_log_text(self, text: str, log_file_path: str):
@@ -288,13 +333,14 @@ class Simulator:
         # Path
         out_dir = self._create_out_dir(out_prefix)
         log_file_path = os.path.join(out_dir, out_prefix + ".log")
+        dcd_file_path = os.path.join(out_dir, out_prefix + ".dcd")
         cv_file_path = os.path.join(out_dir, "cv.txt")
         open(cv_file_path, "w").close()
         # Initialization
         start_time = datetime.datetime.now().replace(microsecond=0)
         system = self._create_system()
         integrator = openmm.LangevinIntegrator(
-            temperature, langevin_factor, 0.1 * unit.femtosecond
+            temperature, langevin_factor, 0.01 * unit.femtosecond
         )
         simulation = app.Simulation(
             self._psf.topology, system, integrator, self._platform
@@ -305,22 +351,20 @@ class Simulator:
         )
         simulation.context.setPositions(new_positions)
         simulation.context.setVelocities(self._cur_velocities)
-        simulation.step(num_steps_per_cv)
+        simulation.step(num_steps_per_cv // 5)
         initialized_state = simulation.context.getState(
             getPositions=True, getVelocities=True
         )
         # Bias potential
         system = self._create_system()
         bias_potential = openmm.CustomExternalForce(
-            "k*periodicdistance(x, y, z, x0, y0, z0)^2"
+            "k*periodicdistance(0, 0, z, 0, 0, z0)^2"
         )
         bias_potential.addGlobalParameter(
             "k", spring_constant / (unit.kilojoule_per_mole / unit.nanometer**2)
         )
-        bias_potential.addPerParticleParameter("x0")
-        bias_potential.addPerParticleParameter("y0")
         bias_potential.addPerParticleParameter("z0")
-        bias_potential.addParticle(target_particle_id, [0, 0, cv_list[0]])
+        bias_potential.addParticle(target_particle_id, [cv_list[0]])
         system.addForce(bias_potential)
         # Integrator
         integrator = openmm.LangevinIntegrator(temperature, langevin_factor, step_size)
@@ -337,6 +381,7 @@ class Simulator:
             remainingTime=True,
             separator="\t",
         )
+        dcd_reporter = app.DCDReporter(dcd_file_path, out_freq * 10)
         # Simulation
         simulation = app.Simulation(
             self._psf.topology, system, integrator, self._platform
@@ -345,13 +390,14 @@ class Simulator:
         simulation.context.setVelocities(initialized_state.getVelocities())
         # Add reporter
         simulation.reporters.append(log_reporter)
+        simulation.reporters.append(dcd_reporter)
         # Sample
         num_epoch_per_cv = num_steps_per_cv // out_freq
         for cv in cv_list:
-            bias_potential.setParticleParameters(0, target_particle_id, [0, 0, cv])
+            bias_potential.setParticleParameters(0, target_particle_id, [cv])
             bias_potential.updateParametersInContext(simulation.context)
             self._dump_log_text(
-                text="Start sampling with cv at [0, 0, %.3f]" % cv,
+                text="Start sampling with cv at %.3f" % cv,
                 log_file_path=cv_file_path,
             )
             for _ in range(num_epoch_per_cv):
@@ -391,7 +437,7 @@ if __name__ == "__main__":
     data_dir = os.path.join(cur_dir, "data")
     str_dir = os.path.join(cur_dir, "str")
     out_dir = os.path.join(cur_dir, "out")
-    # Simulator
+    # # Simulator
     simulator = Simulator(
         str_dir=str_dir,
         str_name="str",
@@ -429,13 +475,13 @@ if __name__ == "__main__":
     # )
     simulator.load_state(out_dir=os.path.join(out_dir, "03_nvt_eq"))
     simulator.umbrella_sample_nvt(
-        cv_list=[i for i in np.linspace(8.75, 13.75, 100, endpoint=True)],
+        cv_list=[i for i in np.linspace(21.5, 25.5, 100, endpoint=True)],
         num_steps_per_cv=100000,
-        step_size=2 * unit.femtosecond,
+        step_size=1 * unit.femtosecond,
         temperature=300 * unit.kelvin,
-        target_particle_id=207629,
+        target_particle_id=207640,
         spring_constant=50 * unit.kilocalorie_per_mole / unit.nanometer,
         langevin_factor=1 / unit.picosecond,
-        out_prefix="04_nvt_sampling_50kcal",
+        out_prefix="04_nvt_sampling_50kcal_start_from_center",
         out_freq=1000,
     )
