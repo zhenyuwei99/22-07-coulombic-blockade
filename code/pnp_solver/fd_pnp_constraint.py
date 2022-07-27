@@ -517,7 +517,7 @@ if __name__ == "__main__":
     electric_potential[:, :, -1] = 0
     constraint.grid.add_field("electric_potential", electric_potential)
     # exclusion_energy
-    exclusion_energy = 0.5 * nanopore_shape
+    exclusion_energy = 0 * nanopore_shape
     constraint.grid.add_field("exclusion_energy", exclusion_energy)
     # sod
     sod_diffusion_coefficient = (1 - nanopore_shape) * 0.001
