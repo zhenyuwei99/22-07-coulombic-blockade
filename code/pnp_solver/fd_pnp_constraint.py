@@ -180,17 +180,27 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                         charge_density, (grid_x, grid_y, grid_z), charge_xyz
                     )
 
-    def _solve_poisson_equation(self, max_iterations=500, error_tolerance=1e-7):
+    def _solve_poisson_equation(
+        self, max_iterations=500, error_tolerance=5e-6, soa_factor=0.01
+    ):
         inv_2x, inv_2y, inv_2z = 0.5 / self._grid.grid_width
         inv_x2, inv_y2, inv_z2 = (1 / self._grid.grid_width) ** 2
         denominator = 2 * (inv_x2 + inv_y2 + inv_z2)
+        charge_density = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        for i in range(self._num_ion_types):
+            attribute_name = self._ion_type_list[i] + "_density"
+            charge_density += (
+                self._ion_valence_list[i]
+                * getattr(self._grid.field, attribute_name)[1:-1, 1:-1, 1:-1]
+            )
+        charge_density += self._grid.field.charge_density[1:-1, 1:-1, 1:-1]
         x_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         x_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         y_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         y_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         z_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         z_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        for i in range(max_iterations):
+        for iteration in range(max_iterations):
             # X Neumann condition
             x_plus[:-1, :, :] = self._grid.field.electric_potential[2:-1, 1:-1, 1:-1]
             x_plus[-1, :, :] = (
@@ -238,32 +248,32 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 * inv_2z
             ) / self._grid.field.relative_permittivity[1:-1, 1:-1, 1:-1]
             new += (
-                self._grid.field.charge_density[1:-1, 1:-1, 1:-1]
+                charge_density
                 / self._grid.field.relative_permittivity[1:-1, 1:-1, 1:-1]
                 * self._k0
             )
             new *= 1 / denominator
             new = (
-                0.01 * self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
-                + 0.99 * new
+                soa_factor * self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
+                + (1 - soa_factor) * new
             )
-            if (
-                i % 25 == 0
-                and cp.max(
-                    cp.abs(self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] - new)
+            if iteration % 25 == 0:
+                diff = cp.abs(
+                    self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] - new
                 )
-                <= error_tolerance
-            ):
-                self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = new
-                break
+                index = np.unravel_index(cp.argmax(diff), self._grid.inner_shape)
+                error = abs(
+                    diff[index]
+                    / self._grid.field.electric_potential[1:-1, 1:-1, 1:-1][index]
+                )
+                if error <= error_tolerance:
+                    self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = new
+                    break
             self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = new
-        return (
-            i,
-            cp.max(cp.abs(self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] - new)),
-        )
+        return (iteration, error)
 
     def _solve_nernst_plank_equation(
-        self, ion_type: str, max_iterations=100, error_tolerance=5e-7,
+        self, ion_type: str, max_iterations=500, error_tolerance=5e-5, soa_factor=0.05
     ):
         # Read input
         ion_valence = self._ion_valence_list[self._ion_type_list.index(ion_type)]
@@ -327,41 +337,25 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         ## Z Dirichlet
         energy[2, 0] = self._grid.field.electric_potential[1:-1, 1:-1, 2:]
         energy[2, 1] = self._grid.field.electric_potential[1:-1, 1:-1, :-2]
-        energy *= ion_valence
-        energy -= self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] * ion_valence
-        energy *= self._beta * 0.5
+        energy -= self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
+        energy *= self._beta * 0.5 * ion_valence
         # Denominator
         energy = 1 - energy  # 1 - V
         denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         for i in range(self._grid.num_dimensions):
             for j in range(2):
                 denominator += channel_mask[i, j] * diffusion[i, j] * energy[i, j]
+        threshold = 1e-4
+        denominator[(denominator <= threshold) & (denominator >= 0)] = threshold
+        denominator[(denominator >= -threshold) & (denominator < 0)] = -threshold
         denominator = 1 / denominator
-        threshold = 1000
-        denominator[denominator >= threshold] = threshold
-        denominator[denominator < -threshold] = -threshold
         energy = 2 - energy  # 1 + V
 
         for i in range(self._grid.num_dimensions):
             for j in range(2):
                 energy[i, j] *= diffusion[i, j]
 
-        grid = 64
-        fig, ax = plt.subplots(3, 2, figsize=[32, 18])
-        fig.tight_layout()
-        for i in range(self._grid.num_dimensions):
-            for j in range(2):
-                c = ax[i, j].contourf(
-                    self.grid.x[1:-1, grid, 1:-1].get(),
-                    self.grid.z[1:-1, grid, 1:-1].get(),
-                    channel_mask[i, j, :, grid, :].get(),
-                    200,
-                )
-                fig.colorbar(c, ax=ax[i, j])
-        plt.savefig("test.png")
-        plt.close()
-
-        for i in range(500):
+        for iteration in range(max_iterations):
             # X Neumann condition
             density[0, 0, :-1, :, :] = ion_density[2:-1, 1:-1, 1:-1]
             density[0, 0, -1, :, :] = (
@@ -396,34 +390,24 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 - ion_density[1:-1, 1:-1, 0] * self._grid.grid_width[2]
             )
             nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-            for j in range(self._grid.num_dimensions):
-                for k in range(2):
-                    nominator += channel_mask[j, k] * energy[j, k] * density[j, k]
-            ion_density[1:-1, 1:-1, 1:-1] = (
-                0.1 * ion_density[1:-1, 1:-1, 1:-1] + 0.9 * nominator * denominator
+            for i in range(self._grid.num_dimensions):
+                for j in range(2):
+                    nominator += channel_mask[i, j] * energy[i, j] * density[i, j]
+            new = (
+                soa_factor * ion_density[1:-1, 1:-1, 1:-1]
+                + (1 - soa_factor) * nominator * denominator
             )
-            if i % 50 == 0:
-                grid = 64
-                fig, ax = plt.subplots(1, 2, figsize=[16, 9])
-                fig.tight_layout()
-                c = ax[0].contourf(
-                    self.grid.x[1:-1, grid, 1:-1].get(),
-                    self.grid.z[1:-1, grid, 1:-1].get(),
-                    (nominator)[:, grid, :].get(),
-                    200,
-                )
-                fig.colorbar(c, ax=ax[0])
-                c = ax[1].contourf(
-                    self.grid.x[1:-1, grid, 1:-1].get(),
-                    self.grid.z[1:-1, grid, 1:-1].get(),
-                    (denominator)[:, grid, :].get(),
-                    200,
-                )
-                fig.colorbar(c, ax=ax[1])
-                plt.savefig("res%d.png" % i)
-                plt.close()
+            if iteration % 25 == 0:
+                diff = cp.abs(ion_density[1:-1, 1:-1, 1:-1] - new)
+                index = np.unravel_index(cp.argmax(diff), self._grid.inner_shape)
+                error = abs(diff[index] / ion_density[1:-1, 1:-1, 1:-1][index])
+                if error <= error_tolerance:
+                    ion_density[1:-1, 1:-1, 1:-1] = new
+                    break
+            ion_density[1:-1, 1:-1, 1:-1] = new
+        return (iteration, error)
 
-    def update(self, max_iterations=1000, error_tolerance=5e-9):
+    def update(self, max_iterations=500, is_verbose=True):
         self._check_bound_state()
         # Update bspline interpretation
         thread_per_block = 128
@@ -443,104 +427,57 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             "charge_density", charge_density / cp.prod(self._grid.device_grid_width)
         )
         self._grid.check_requirement()
-        RangePush("Solve poisson")
-        iteration, error = self._solve_poisson_equation()
-        RangePop()
-        print(iteration, error)
-        RangePush("Solve nernst-plank")
-        self._solve_nernst_plank_equation("sod")
-        RangePop()
+        for iteration in range(max_iterations):
+            iteration_vec = np.zeros(self._num_ion_types + 1)
+            error_vec = np.zeros(self._num_ion_types + 1)
+            iteration_vec[0], error_vec[0] = self._solve_poisson_equation()
+            for i in range(self._num_ion_types):
+                (
+                    iteration_vec[i + 1],
+                    error_vec[i + 1],
+                ) = self._solve_nernst_plank_equation(self._ion_type_list[i])
+            if is_verbose:
+                log = "Iteration: %d; " % iteration
+                log += "PE: %d, %.3e; " % (iteration_vec[0], error_vec[0])
+                for i in range(self._num_ion_types):
+                    log += "NPE %s: %d, %.3e; " % (
+                        self._ion_type_list[i],
+                        iteration_vec[i + 1],
+                        error_vec[i + 1],
+                    )
+                print(log)
+            if np.all(iteration_vec == 0):
+                if is_verbose:
+                    print("Finish at %d steps" % iteration)
+                break
+            if iteration % 5 == 0:
+                grid = 64
+                fig, ax = plt.subplots(3, 1, figsize=[16, 27])
+                fig.tight_layout()
+                c = ax[0].contourf(
+                    self.grid.x[1:-1, grid, 1:-1].get(),
+                    self.grid.z[1:-1, grid, 1:-1].get(),
+                    self.grid.field.electric_potential[1:-1, grid, 1:-1].get(),
+                    100,
+                )
+                fig.colorbar(c, ax=ax[0])
+                c = ax[1].contourf(
+                    self.grid.x[1:-1, grid, 1:-1].get(),
+                    self.grid.z[1:-1, grid, 1:-1].get(),
+                    self.grid.field.sod_density[1:-1, grid, 1:-1].get(),
+                    100,
+                )
+                fig.colorbar(c, ax=ax[1])
+                c = ax[2].contourf(
+                    self.grid.x[1:-1, grid, 1:-1].get(),
+                    self.grid.z[1:-1, grid, 1:-1].get(),
+                    self.grid.field.cla_density[1:-1, grid, 1:-1].get(),
+                    100,
+                )
+                fig.colorbar(c, ax=ax[2])
+                plt.savefig("pnp-%d.png" % iteration)
+                plt.close()
 
     @property
     def grid(self) -> Grid:
         return self._grid
-
-
-if __name__ == "__main__":
-    import os
-    import mdpy as md
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    cur_dir = os.path.dirname(os.path.abspath(__file__))
-    str_dir = os.path.join(cur_dir, "str")
-    pdb = md.io.PDBParser(os.path.join(str_dir, "sio2_pore.pdb"))
-    psf = md.io.PSFParser(os.path.join(str_dir, "sio2_pore.psf"))
-    topology = psf.topology
-    # for particle in topology.particles:
-    #   particle._charge = 0
-    # topology.join()
-    pbc = pdb.pbc_matrix
-    pbc[2, 2] *= 4
-    ensemble = md.core.Ensemble(topology, pbc, is_use_tile_list=False)
-    ensemble.state.set_positions(pdb.positions)
-    # Solver
-    grid = Grid(
-        x=[-pbc[0, 0] / 2, pbc[0, 0] / 2, 128],
-        y=[-pbc[1, 1] / 2, pbc[1, 1] / 2, 128],
-        z=[-pbc[2, 2] / 2, pbc[2, 2] / 2, 256],
-    )
-    # Set constraint
-    constraint = FDPoissonNernstPlanckConstraint(
-        Quantity(300, kelvin), grid, sod=1, cla=-1
-    )
-    r = cp.sqrt(grid.x ** 2 + grid.y ** 2)
-    alpha = 2
-    nanopore_shape = 1 / (
-        (1 + cp.exp(-alpha * (r - 9.5))) * (1 + cp.exp(alpha * (cp.abs(grid.z) - 20)))
-    )  # 1 for pore 0 for solvation
-    channel_shape = nanopore_shape >= 0.5
-    constraint.grid.add_field("channel_shape", channel_shape)
-    # relative_permittivity
-    relative_permittivity = (1 - nanopore_shape) * 78 + 2
-    # relative_permittivity = constraint.grid.ones_field()
-    constraint.grid.add_field("relative_permittivity", relative_permittivity)
-    # electric_potential
-    electric_potential = constraint.grid.zeros_field()
-    electric_potential[:, :, 0] = (
-        Quantity(0, volt).convert_to(default_energy_unit / default_charge_unit).value
-    )
-    electric_potential[:, :, -1] = 0
-    constraint.grid.add_field("electric_potential", electric_potential)
-    # sod
-    sod_diffusion_coefficient = (1 - nanopore_shape) * 0.001
-    constraint.grid.add_field("sod_diffusion_coefficient", sod_diffusion_coefficient)
-    sod_density = (1 - nanopore_shape) * 0.5
-    sod_density[0, :, :] = 0
-    sod_density[-1, :, :] = 0
-    sod_density[:, 0, :] = 0
-    sod_density[:, -1, :] = 0
-    sod_density[:, :, 0] = 0
-    sod_density[:, :, -1] = 0
-    constraint.grid.add_field("sod_density", sod_density)
-    # cla
-    cla_diffusion_coefficient = (1 - nanopore_shape) * 2
-    constraint.grid.add_field("cla_diffusion_coefficient", cla_diffusion_coefficient)
-    constraint.grid.add_field("cla_density", constraint.grid.zeros_field())
-
-    ensemble.add_constraints(constraint)
-    ensemble.update_constraints()
-
-    grid = 64
-    fig, ax = plt.subplots(1, 1, figsize=[16, 9])
-    fig.tight_layout()
-    # c = ax.contourf(
-    #     constraint.grid.x[1:-1, grid, 1:-1].get(),
-    #     constraint.grid.z[1:-1, grid, 1:-1].get(),
-    #     constraint.grid.field.exclusion_potential_energy[1:-1, grid, 1:-1].get(),
-    #     100,
-    # )
-    c = ax.contourf(
-        constraint.grid.x[1:-1, grid, 1:-1].get(),
-        constraint.grid.z[1:-1, grid, 1:-1].get(),
-        constraint.grid.field.sod_density[1:-1, grid, 1:-1].get(),
-        100,
-    )
-    # c = ax.contourf(
-    #     constraint.grid.x[1:-1, 1:-1, grid].get(),
-    #     constraint.grid.y[1:-1, 1:-1, grid].get(),
-    #     constraint.grid.field.electric_potential[1:-1, 1:-1, grid].get(),
-    #     100,
-    # )
-    plt.colorbar(c)
-    plt.savefig("res.png")
