@@ -53,10 +53,6 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                     "require_gradient": False,
                     "require_curvature": False,
                 },
-                "exclusion_energy": {
-                    "require_gradient": True,
-                    "require_curvature": True,
-                },
                 "channel_shape": {
                     "require_gradient": False,
                     "require_curvature": False,
@@ -331,18 +327,8 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         ## Z Dirichlet
         energy[2, 0] = self._grid.field.electric_potential[1:-1, 1:-1, 2:]
         energy[2, 1] = self._grid.field.electric_potential[1:-1, 1:-1, :-2]
-        ## Add Exclusion energy
         energy *= ion_valence
-        for i in range(self._grid.num_dimensions):
-            for j in [0, 1]:
-                # 0 for plus and 1 for minus
-                target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
-                energy[i, j] += self._grid.field.exclusion_energy[tuple(target_slice)]
-                target_slice[i] = slice(1, -1)
-        energy -= (
-            self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] * ion_valence
-            + self._grid.field.exclusion_energy[1:-1, 1:-1, 1:-1]
-        )
+        energy -= self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] * ion_valence
         energy *= self._beta * 0.5
         # Denominator
         energy = 1 - energy  # 1 - V
@@ -375,7 +361,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         plt.savefig("test.png")
         plt.close()
 
-        for i in range(5000):
+        for i in range(500):
             # X Neumann condition
             density[0, 0, :-1, :, :] = ion_density[2:-1, 1:-1, 1:-1]
             density[0, 0, -1, :, :] = (
@@ -516,9 +502,6 @@ if __name__ == "__main__":
     )
     electric_potential[:, :, -1] = 0
     constraint.grid.add_field("electric_potential", electric_potential)
-    # exclusion_energy
-    exclusion_energy = 0 * nanopore_shape
-    constraint.grid.add_field("exclusion_energy", exclusion_energy)
     # sod
     sod_diffusion_coefficient = (1 - nanopore_shape) * 0.001
     constraint.grid.add_field("sod_diffusion_coefficient", sod_diffusion_coefficient)
