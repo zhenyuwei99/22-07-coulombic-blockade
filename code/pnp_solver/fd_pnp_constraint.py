@@ -7,7 +7,7 @@ author : Zhenyu Wei
 copyright : (C)Copyright 2021-present, mdpy organization
 """
 
-from inspect import getargs
+import matplotlib.pyplot as plt
 import math
 import numpy as np
 import numba as nb
@@ -35,6 +35,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         # Temperature
         self._temperature = check_quantity(temperature, kelvin)
         self._beta = 1 / (self._temperature * KB).convert_to(default_energy_unit).value
+        self._k0 = 1 / (4 * np.pi * EPSILON0.value)
         self._temperature = self._temperature.value
         # Set grid
         self._grid = grid
@@ -55,6 +56,10 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 "exclusion_energy": {
                     "require_gradient": True,
                     "require_curvature": True,
+                },
+                "channel_shape": {
+                    "require_gradient": False,
+                    "require_curvature": False,
                 },
             }
         )
@@ -182,7 +187,6 @@ class FDPoissonNernstPlanckConstraint(Constraint):
     def _solve_poisson_equation(self, max_iterations=500, error_tolerance=1e-7):
         inv_2x, inv_2y, inv_2z = 0.5 / self._grid.grid_width
         inv_x2, inv_y2, inv_z2 = (1 / self._grid.grid_width) ** 2
-        inv_k0 = 1 / (4 * np.pi * EPSILON0.value)
         denominator = 2 * (inv_x2 + inv_y2 + inv_z2)
         x_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         x_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
@@ -240,7 +244,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             new += (
                 self._grid.field.charge_density[1:-1, 1:-1, 1:-1]
                 / self._grid.field.relative_permittivity[1:-1, 1:-1, 1:-1]
-                * inv_k0
+                * self._k0
             )
             new *= 1 / denominator
             new = (
@@ -257,8 +261,9 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = new
                 break
             self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = new
-        return i, cp.max(
-            cp.abs(self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] - new)
+        return (
+            i,
+            cp.max(cp.abs(self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] - new)),
         )
 
     def _solve_nernst_plank_equation(
@@ -274,6 +279,9 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             self._grid.field, ion_type + "_diffusion_coefficient"
         )
         inv_square = (1 / self._grid.grid_width) ** 2
+        channel_mask = cp.zeros(
+            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        )  # True for no-boundary
         energy = cp.zeros(
             [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
         )
@@ -283,6 +291,20 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         density = cp.zeros(
             [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
         )
+        target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
+        for i in range(self._grid.num_dimensions):
+            for j in [0, 1]:
+                # 0 for plus and 1 for minus
+                target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
+                channel_mask[i, j] = (
+                    self._grid.field.channel_shape[tuple(target_slice)]
+                    == self._grid.field.channel_shape[1:-1, 1:-1, 1:-1]
+                )
+                diffusion[i, j] = (0.5 * inv_square[i]) * (
+                    diffusion_coefficient[tuple(target_slice)]
+                    + diffusion_coefficient[1:-1, 1:-1, 1:-1]
+                )
+                target_slice[i] = slice(1, -1)
         ## X Neumann condition
         energy[0, 0, :-1, :, :] = self._grid.field.electric_potential[2:-1, 1:-1, 1:-1]
         energy[0, 0, -1, :, :] = (
@@ -314,21 +336,12 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         energy[2, 1] = self._grid.field.electric_potential[1:-1, 1:-1, :-2]
         ## Add Exclusion energy
         energy *= ion_valence
-        target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
-        self_slice = [0, 0]
         for i in range(self._grid.num_dimensions):
             for j in [0, 1]:
                 # 0 for plus and 1 for minus
-                self_slice[0] = i
-                self_slice[1] = j
                 target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
-                energy[tuple(self_slice)] += self._grid.field.exclusion_energy[
-                    tuple(target_slice)
-                ]
-                diffusion[tuple(self_slice)] = (0.5 * inv_square[i]) * (
-                    diffusion_coefficient[tuple(target_slice)]
-                    + diffusion_coefficient[1:-1, 1:-1, 1:-1]
-                )
+                energy[i, j] += self._grid.field.exclusion_energy[tuple(target_slice)]
+                target_slice[i] = slice(1, -1)
         energy -= (
             self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] * ion_valence
             + self._grid.field.exclusion_energy[1:-1, 1:-1, 1:-1]
@@ -339,16 +352,33 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         for i in range(self._grid.num_dimensions):
             for j in range(2):
-                denominator += diffusion[i, j] * energy[i, j]
+                denominator += channel_mask[i, j] * diffusion[i, j] * energy[i, j]
+        denominator = 1 / denominator
+        threshold = 1000
+        denominator[denominator >= threshold] = threshold
+        denominator[denominator < -threshold] = -threshold
         energy = 2 - energy  # 1 + V
+
         for i in range(self._grid.num_dimensions):
             for j in range(2):
                 energy[i, j] *= diffusion[i, j]
-        print(
-            cp.prod(cp.array(denominator.shape)), cp.count_nonzero(denominator <= 1e-10)
-        )
 
-        for i in range(100):
+        grid = 64
+        fig, ax = plt.subplots(3, 2, figsize=[32, 18])
+        fig.tight_layout()
+        for i in range(self._grid.num_dimensions):
+            for j in range(2):
+                c = ax[i, j].contourf(
+                    self.grid.x[1:-1, grid, 1:-1].get(),
+                    self.grid.z[1:-1, grid, 1:-1].get(),
+                    channel_mask[i, j, :, grid, :].get(),
+                    200,
+                )
+                fig.colorbar(c, ax=ax[i, j])
+        plt.savefig("test.png")
+        plt.close()
+
+        for i in range(5000):
             # X Neumann condition
             density[0, 0, :-1, :, :] = ion_density[2:-1, 1:-1, 1:-1]
             density[0, 0, -1, :, :] = (
@@ -383,12 +413,32 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 - ion_density[1:-1, 1:-1, 0] * self._grid.grid_width[2]
             )
             nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-            for i in range(self._grid.num_dimensions):
-                for j in range(2):
-                    nominator += energy[i, j] * density[i, j]
+            for j in range(self._grid.num_dimensions):
+                for k in range(2):
+                    nominator += channel_mask[j, k] * energy[j, k] * density[j, k]
             ion_density[1:-1, 1:-1, 1:-1] = (
-                0.01 * ion_density[1:-1, 1:-1, 1:-1] + 0.99 * nominator / denominator
+                0.1 * ion_density[1:-1, 1:-1, 1:-1] + 0.9 * nominator * denominator
             )
+            if i % 50 == 0:
+                grid = 64
+                fig, ax = plt.subplots(1, 2, figsize=[16, 9])
+                fig.tight_layout()
+                c = ax[0].contourf(
+                    self.grid.x[1:-1, grid, 1:-1].get(),
+                    self.grid.z[1:-1, grid, 1:-1].get(),
+                    (nominator)[:, grid, :].get(),
+                    200,
+                )
+                fig.colorbar(c, ax=ax[0])
+                c = ax[1].contourf(
+                    self.grid.x[1:-1, grid, 1:-1].get(),
+                    self.grid.z[1:-1, grid, 1:-1].get(),
+                    (denominator)[:, grid, :].get(),
+                    200,
+                )
+                fig.colorbar(c, ax=ax[1])
+                plt.savefig("res%d.png" % i)
+                plt.close()
 
     def update(self, max_iterations=1000, error_tolerance=5e-9):
         self._check_bound_state()
@@ -451,29 +501,37 @@ if __name__ == "__main__":
     constraint = FDPoissonNernstPlanckConstraint(
         Quantity(300, kelvin), grid, sod=1, cla=-1
     )
-    # relative_permittivity
     r = cp.sqrt(grid.x**2 + grid.y**2)
     alpha = 2
     nanopore_shape = 1 / (
         (1 + cp.exp(-alpha * (r - 9.5))) * (1 + cp.exp(alpha * (cp.abs(grid.z) - 20)))
     )  # 1 for pore 0 for solvation
+    channel_shape = nanopore_shape >= 0.5
+    constraint.grid.add_field("channel_shape", channel_shape)
+    # relative_permittivity
     relative_permittivity = (1 - nanopore_shape) * 78 + 2
     # relative_permittivity = constraint.grid.ones_field()
     constraint.grid.add_field("relative_permittivity", relative_permittivity)
     # electric_potential
     electric_potential = constraint.grid.zeros_field()
     electric_potential[:, :, 0] = (
-        Quantity(1.2, volt).convert_to(default_energy_unit / default_charge_unit).value
+        Quantity(0, volt).convert_to(default_energy_unit / default_charge_unit).value
     )
     electric_potential[:, :, -1] = 0
     constraint.grid.add_field("electric_potential", electric_potential)
     # exclusion_energy
-    exclusion_energy = 1 * nanopore_shape
+    exclusion_energy = 0.5 * nanopore_shape
     constraint.grid.add_field("exclusion_energy", exclusion_energy)
     # sod
-    sod_diffusion_coefficient = (1 - nanopore_shape) * 0.0007 + 0.0001
+    sod_diffusion_coefficient = (1 - nanopore_shape) * 0.001
     constraint.grid.add_field("sod_diffusion_coefficient", sod_diffusion_coefficient)
-    sod_density = (1 - nanopore_shape) * 2
+    sod_density = (1 - nanopore_shape) * 0.5
+    sod_density[0, :, :] = 0
+    sod_density[-1, :, :] = 0
+    sod_density[:, 0, :] = 0
+    sod_density[:, -1, :] = 0
+    sod_density[:, :, 0] = 0
+    sod_density[:, :, -1] = 0
     constraint.grid.add_field("sod_density", sod_density)
     # cla
     cla_diffusion_coefficient = (1 - nanopore_shape) * 2
