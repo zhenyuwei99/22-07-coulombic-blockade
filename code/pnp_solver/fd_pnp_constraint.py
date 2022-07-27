@@ -183,9 +183,8 @@ class FDPoissonNernstPlanckConstraint(Constraint):
     def _solve_poisson_equation(
         self, max_iterations=500, error_tolerance=5e-6, soa_factor=0.01
     ):
-        inv_2x, inv_2y, inv_2z = 0.5 / self._grid.grid_width
-        inv_x2, inv_y2, inv_z2 = (1 / self._grid.grid_width) ** 2
-        denominator = 2 * (inv_x2 + inv_y2 + inv_z2)
+        inv_square = (1 / self._grid.grid_width) ** 2
+        # Charge density
         charge_density = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         for i in range(self._num_ion_types):
             attribute_name = self._ion_type_list[i] + "_density"
@@ -194,68 +193,65 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 * getattr(self._grid.field, attribute_name)[1:-1, 1:-1, 1:-1]
             )
         charge_density += self._grid.field.charge_density[1:-1, 1:-1, 1:-1]
-        x_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        x_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        y_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        y_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        z_plus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        z_minus = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        charge_density *= self._k0
+        # Relative permittivity
+        relative_permittivity = cp.zeros(
+            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        )
+        denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
+        for i in range(self._grid.num_dimensions):
+            for j in range(2):
+                # 0 for plus and 1 for minus
+                target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
+                relative_permittivity[i, j] = (0.5 * inv_square[i]) * (
+                    self._grid.field.relative_permittivity[tuple(target_slice)]
+                    + self._grid.field.relative_permittivity[1:-1, 1:-1, 1:-1]
+                )
+                denominator += relative_permittivity[i, j]
+        denominator = 1 / denominator
+        # Iteration
+        phi = cp.zeros(
+            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        )
         for iteration in range(max_iterations):
             # X Neumann condition
-            x_plus[:-1, :, :] = self._grid.field.electric_potential[2:-1, 1:-1, 1:-1]
-            x_plus[-1, :, :] = (
+            phi[0, 0, :-1, :, :] = self._grid.field.electric_potential[2:-1, 1:-1, 1:-1]
+            phi[0, 0, -1, :, :] = (
                 self._grid.field.electric_potential[-2, 1:-1, 1:-1]
                 + self._grid.field.electric_potential[-1, 1:-1, 1:-1]
                 * self._grid.grid_width[0]
             )
-            x_minus[1:, :, :] = self._grid.field.electric_potential[1:-2, 1:-1, 1:-1]
-            x_minus[0, :, :] = (
+            phi[0, 1, 1:, :, :] = self._grid.field.electric_potential[1:-2, 1:-1, 1:-1]
+            phi[0, 1, 0, :, :] = (
                 self._grid.field.electric_potential[1, 1:-1, 1:-1]
                 - self._grid.field.electric_potential[0, 1:-1, 1:-1]
                 * self._grid.grid_width[0]
             )
             # Y Neumann
-            y_plus[:, :-1, :] = self._grid.field.electric_potential[1:-1, 2:-1, 1:-1]
-            y_plus[:, -1, :] = (
+            phi[1, 0, :, :-1, :] = self._grid.field.electric_potential[1:-1, 2:-1, 1:-1]
+            phi[1, 0, :, -1, :] = (
                 self._grid.field.electric_potential[1:-1, -2, 1:-1]
                 + self._grid.field.electric_potential[1:-1, -1, 1:-1]
                 * self._grid.grid_width[1]
             )
-            y_minus[:, 1:, :] = self._grid.field.electric_potential[1:-1, 1:-2, 1:-1]
-            y_minus[:, 0, :] = (
+            phi[1, 1, :, 1:, :] = self._grid.field.electric_potential[1:-1, 1:-2, 1:-1]
+            phi[1, 1, :, 0, :] = (
                 self._grid.field.electric_potential[1:-1, 1, 1:-1]
                 - self._grid.field.electric_potential[1:-1, 0, 1:-1]
                 * self._grid.grid_width[1]
             )
             # Z Dirichlet
-            z_plus = self._grid.field.electric_potential[1:-1, 1:-1, 2:]
-            z_minus = self._grid.field.electric_potential[1:-1, 1:-1, :-2]
-            # Iteration rule
-            new = (
-                (x_plus + x_minus) * inv_x2
-                + (y_plus + y_minus) * inv_y2
-                + (z_plus + z_minus) * inv_z2
-            )
-            new += (
-                (x_plus - x_minus)
-                * self._grid.gradient.relative_permittivity[0, :, :, :]
-                * inv_2x
-                + (y_plus - y_minus)
-                * self._grid.gradient.relative_permittivity[1, :, :, :]
-                * inv_2y
-                + (z_plus - z_minus)
-                * self._grid.gradient.relative_permittivity[2, :, :, :]
-                * inv_2z
-            ) / self._grid.field.relative_permittivity[1:-1, 1:-1, 1:-1]
-            new += (
-                charge_density
-                / self._grid.field.relative_permittivity[1:-1, 1:-1, 1:-1]
-                * self._k0
-            )
-            new *= 1 / denominator
+            phi[2, 0] = self._grid.field.electric_potential[1:-1, 1:-1, 2:]
+            phi[2, 1] = self._grid.field.electric_potential[1:-1, 1:-1, :-2]
+            nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+            for i in range(self._grid.num_dimensions):
+                for j in range(2):
+                    nominator += relative_permittivity[i, j] * phi[i, j]
+            nominator += charge_density
             new = (
                 soa_factor * self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
-                + (1 - soa_factor) * new
+                + (1 - soa_factor) * nominator * denominator
             )
             if iteration % 25 == 0:
                 diff = cp.abs(
@@ -345,7 +341,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         for i in range(self._grid.num_dimensions):
             for j in range(2):
                 denominator += channel_mask[i, j] * diffusion[i, j] * energy[i, j]
-        threshold = 1e-4
+        threshold = 5e-4
         denominator[(denominator <= threshold) & (denominator >= 0)] = threshold
         denominator[(denominator >= -threshold) & (denominator < 0)] = -threshold
         denominator = 1 / denominator
