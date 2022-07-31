@@ -26,6 +26,11 @@ from mdpy.error import *
 BSPLINE_ORDER = 4
 NUM_GRIDS_PER_BLOCK = 8
 DATA_SHAPE = NUM_GRIDS_PER_BLOCK + 2
+NP_DENSITY_THRESHOLD = (
+    (Quantity(500, mol / decimeter ** 3) * NA)
+    .convert_to(1 / default_length_unit ** 3)
+    .value
+)
 
 
 class FDPoissonNernstPlanckConstraint(Constraint):
@@ -297,7 +302,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 channel_mask[i, j] = (
                     self._grid.field.channel_shape[tuple(target_slice)]
                     == self._grid.field.channel_shape[1:-1, 1:-1, 1:-1]
-                )
+                ) & (self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] == 0)
                 diffusion[i, j] = (0.5 * inv_square[i]) * (
                     diffusion_coefficient[tuple(target_slice)]
                     + diffusion_coefficient[1:-1, 1:-1, 1:-1]
@@ -340,12 +345,11 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         for i in range(self._grid.num_dimensions):
             for j in range(2):
                 denominator += channel_mask[i, j] * diffusion[i, j] * energy[i, j]
-        threshold = 1e-4
-        denominator[(denominator <= threshold) & (denominator >= 0)] = threshold
-        denominator[(denominator >= -threshold) & (denominator < 0)] = -threshold
+        # For non-zero denominator, Add a small value for non-pore area
+        threshold = 1e-8
+        denominator += self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] * threshold
         denominator = 1 / denominator
         energy = 2 - energy  # 1 + V
-
         for i in range(self._grid.num_dimensions):
             for j in range(2):
                 energy[i, j] *= diffusion[i, j]
@@ -384,6 +388,9 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 soa_factor * ion_density[1:-1, 1:-1, 1:-1]
                 + (1 - soa_factor) * nominator * denominator
             )
+            # For converge, avoiding extreme large result in the beginning of iteration
+            new[new >= NP_DENSITY_THRESHOLD] = NP_DENSITY_THRESHOLD
+            new[new <= -NP_DENSITY_THRESHOLD] = -NP_DENSITY_THRESHOLD
             if iteration % 25 == 0:
                 diff = cp.abs(ion_density[1:-1, 1:-1, 1:-1] - new)
                 index = np.unravel_index(cp.argmax(diff), self._grid.inner_shape)
@@ -439,33 +446,36 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 if is_verbose:
                     print("Finish at %d steps; Total time: %s" % (iteration, e - s))
                 break
-            # if iteration % 5 == 0:
-            #     grid = self._grid.inner_shape[1] // 2
-            #     fig, ax = plt.subplots(3, 1, figsize=[16, 27])
-            #     fig.tight_layout()
-            #     c = ax[0].contourf(
-            #         self.grid.coordinate.x[1:-1, grid, 1:-1].get(),
-            #         self.grid.coordinate.z[1:-1, grid, 1:-1].get(),
-            #         self.grid.field.electric_potential[1:-1, grid, 1:-1].get(),
-            #         100,
-            #     )
-            #     fig.colorbar(c, ax=ax[0])
-            #     c = ax[1].contourf(
-            #         self.grid.coordinate.x[1:-1, grid, 1:-1].get(),
-            #         self.grid.coordinate.z[1:-1, grid, 1:-1].get(),
-            #         self.grid.field.sod_density[1:-1, grid, 1:-1].get(),
-            #         100,
-            #     )
-            #     fig.colorbar(c, ax=ax[1])
-            #     c = ax[2].contourf(
-            #         self.grid.coordinate.x[1:-1, grid, 1:-1].get(),
-            #         self.grid.coordinate.z[1:-1, grid, 1:-1].get(),
-            #         self.grid.field.cla_density[1:-1, grid, 1:-1].get(),
-            #         100,
-            #     )
-            #     fig.colorbar(c, ax=ax[2])
-            #     plt.savefig("pnp-%d.png" % iteration)
-            #     plt.close()
+            if False and iteration % 5 == 0:
+                import os
+
+                cur_dir = os.path.dirname(os.path.abspath(__file__))
+                grid = self._grid.inner_shape[1] // 2
+                fig, ax = plt.subplots(3, 1, figsize=[16, 27])
+                fig.tight_layout()
+                c = ax[0].contourf(
+                    self.grid.coordinate.x[1:-1, grid, 1:-1].get(),
+                    self.grid.coordinate.z[1:-1, grid, 1:-1].get(),
+                    self.grid.field.electric_potential[1:-1, grid, 1:-1].get(),
+                    100,
+                )
+                fig.colorbar(c, ax=ax[0])
+                c = ax[1].contourf(
+                    self.grid.coordinate.x[1:-1, grid, 1:-1].get(),
+                    self.grid.coordinate.z[1:-1, grid, 1:-1].get(),
+                    self.grid.field.sod_density[1:-1, grid, 1:-1].get(),
+                    100,
+                )
+                fig.colorbar(c, ax=ax[1])
+                c = ax[2].contourf(
+                    self.grid.coordinate.x[1:-1, grid, 1:-1].get(),
+                    self.grid.coordinate.z[1:-1, grid, 1:-1].get(),
+                    self.grid.field.cla_density[1:-1, grid, 1:-1].get(),
+                    100,
+                )
+                fig.colorbar(c, ax=ax[2])
+                plt.savefig(os.path.join(cur_dir, "pnp-%d.png" % iteration))
+                plt.close()
 
     @property
     def grid(self) -> Grid:
