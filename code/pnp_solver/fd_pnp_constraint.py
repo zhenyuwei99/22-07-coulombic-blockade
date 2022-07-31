@@ -8,6 +8,7 @@ copyright : (C)Copyright 2021-present, mdpy organization
 """
 
 import matplotlib.pyplot as plt
+import time
 import math
 import numpy as np
 import numba as nb
@@ -15,13 +16,11 @@ import numba.cuda as cuda
 import cupy as cp
 from mdpy import SPATIAL_DIM
 from mdpy.environment import *
-from mdpy.core import Ensemble
+from mdpy.core import Ensemble, Grid
 from mdpy.constraint import Constraint
 from mdpy.utils import *
 from mdpy.unit import *
 from mdpy.error import *
-from grid import Grid
-from cupy.cuda.nvtx import RangePush, RangePop
 
 
 BSPLINE_ORDER = 4
@@ -46,7 +45,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                     "require_curvature": False,
                 },
                 "relative_permittivity": {
-                    "require_gradient": True,
+                    "require_gradient": False,
                     "require_curvature": False,
                 },
                 "charge_density": {
@@ -69,7 +68,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 "require_curvature": False,
             }
             self._grid.requirement[key + "_diffusion_coefficient"] = {
-                "require_gradient": True,
+                "require_gradient": False,
                 "require_curvature": False,
             }
         self._bspline_interpretation = cuda.jit(
@@ -341,7 +340,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         for i in range(self._grid.num_dimensions):
             for j in range(2):
                 denominator += channel_mask[i, j] * diffusion[i, j] * energy[i, j]
-        threshold = 5e-4
+        threshold = 1e-4
         denominator[(denominator <= threshold) & (denominator >= 0)] = threshold
         denominator[(denominator >= -threshold) & (denominator < 0)] = -threshold
         denominator = 1 / denominator
@@ -375,16 +374,8 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 - ion_density[1:-1, 0, 1:-1] * self._grid.grid_width[1]
             )
             # Z Neumann
-            density[2, 0, :, :, :-1] = ion_density[1:-1, 1:-1, 2:-1]
-            density[2, 0, :, :, -1] = (
-                ion_density[1:-1, 1:-1, -2]
-                + ion_density[1:-1, 1:-1, -1] * self._grid.grid_width[2]
-            )
-            density[2, 1, :, :, 1:] = ion_density[1:-1, 1:-1, 1:-2]
-            density[2, 1, :, :, 0] = (
-                ion_density[1:-1, 1:-1, 1]
-                - ion_density[1:-1, 1:-1, 0] * self._grid.grid_width[2]
-            )
+            density[2, 0] = ion_density[1:-1, 1:-1, 2:]
+            density[2, 1] = ion_density[1:-1, 1:-1, :-2]
             nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
             for i in range(self._grid.num_dimensions):
                 for j in range(2):
@@ -423,6 +414,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             "charge_density", charge_density / cp.prod(self._grid.device_grid_width)
         )
         self._grid.check_requirement()
+        s = time.time()
         for iteration in range(max_iterations):
             iteration_vec = np.zeros(self._num_ion_types + 1)
             error_vec = np.zeros(self._num_ion_types + 1)
@@ -443,36 +435,37 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                     )
                 print(log)
             if np.all(iteration_vec == 0):
+                e = time.time()
                 if is_verbose:
-                    print("Finish at %d steps" % iteration)
+                    print("Finish at %d steps; Total time: %s" % (iteration, e - s))
                 break
-            if iteration % 5 == 0:
-                grid = 64
-                fig, ax = plt.subplots(3, 1, figsize=[16, 27])
-                fig.tight_layout()
-                c = ax[0].contourf(
-                    self.grid.x[1:-1, grid, 1:-1].get(),
-                    self.grid.z[1:-1, grid, 1:-1].get(),
-                    self.grid.field.electric_potential[1:-1, grid, 1:-1].get(),
-                    100,
-                )
-                fig.colorbar(c, ax=ax[0])
-                c = ax[1].contourf(
-                    self.grid.x[1:-1, grid, 1:-1].get(),
-                    self.grid.z[1:-1, grid, 1:-1].get(),
-                    self.grid.field.sod_density[1:-1, grid, 1:-1].get(),
-                    100,
-                )
-                fig.colorbar(c, ax=ax[1])
-                c = ax[2].contourf(
-                    self.grid.x[1:-1, grid, 1:-1].get(),
-                    self.grid.z[1:-1, grid, 1:-1].get(),
-                    self.grid.field.cla_density[1:-1, grid, 1:-1].get(),
-                    100,
-                )
-                fig.colorbar(c, ax=ax[2])
-                plt.savefig("pnp-%d.png" % iteration)
-                plt.close()
+            # if iteration % 5 == 0:
+            #     grid = self._grid.inner_shape[1] // 2
+            #     fig, ax = plt.subplots(3, 1, figsize=[16, 27])
+            #     fig.tight_layout()
+            #     c = ax[0].contourf(
+            #         self.grid.coordinate.x[1:-1, grid, 1:-1].get(),
+            #         self.grid.coordinate.z[1:-1, grid, 1:-1].get(),
+            #         self.grid.field.electric_potential[1:-1, grid, 1:-1].get(),
+            #         100,
+            #     )
+            #     fig.colorbar(c, ax=ax[0])
+            #     c = ax[1].contourf(
+            #         self.grid.coordinate.x[1:-1, grid, 1:-1].get(),
+            #         self.grid.coordinate.z[1:-1, grid, 1:-1].get(),
+            #         self.grid.field.sod_density[1:-1, grid, 1:-1].get(),
+            #         100,
+            #     )
+            #     fig.colorbar(c, ax=ax[1])
+            #     c = ax[2].contourf(
+            #         self.grid.coordinate.x[1:-1, grid, 1:-1].get(),
+            #         self.grid.coordinate.z[1:-1, grid, 1:-1].get(),
+            #         self.grid.field.cla_density[1:-1, grid, 1:-1].get(),
+            #         100,
+            #     )
+            #     fig.colorbar(c, ax=ax[2])
+            #     plt.savefig("pnp-%d.png" % iteration)
+            #     plt.close()
 
     @property
     def grid(self) -> Grid:
