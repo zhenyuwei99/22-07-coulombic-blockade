@@ -55,7 +55,7 @@ def analysis(
 
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    out_dir = os.path.join(cur_dir, "out/5nm-pore-no-fixed/")
+    out_dir = os.path.join(cur_dir, "out/15nm-pore-no-fixed/")
     target_files = [os.path.join(out_dir, i) for i in os.listdir(out_dir)]
     ele_list = []
     sod_res, cla_res = [], []
@@ -66,10 +66,11 @@ if __name__ == "__main__":
         list(i) for i in zip(*sorted(zip(ele_list, target_files)))
     ]
     for target_file in target_files:
+        index = 128
         grid = md.io.GridParser(target_file).grid
         index = grid.inner_shape[1] // 2
-        sod_res.append(analysis(grid, "sod", 1, 128))
-        cla_res.append(analysis(grid, "cla", -1, 128))
+        sod_res.append(analysis(grid, "sod", 1, index))
+        cla_res.append(analysis(grid, "cla", -1, index))
         print(target_file)
     sod_res = np.array(sod_res)
     cla_res = np.array(cla_res)
