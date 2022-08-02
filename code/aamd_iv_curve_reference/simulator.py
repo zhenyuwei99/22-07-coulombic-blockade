@@ -135,7 +135,6 @@ class Simulator:
         ele_force = openmm.CustomExternalForce("-q*E*z")
         ele_force.addGlobalParameter("E", electric_intensity)
         ele_force.addPerParticleParameter("q")
-        charges = []
         for f in system.getForces():
             if isinstance(f, openmm.NonbondedForce):
                 for i in range(system.getNumParticles()):
