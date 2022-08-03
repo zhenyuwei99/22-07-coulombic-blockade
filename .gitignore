@@ -8,6 +8,7 @@ out/
 str/
 benchmark/
 bak/
+device.h5
 # C extensions
 *.so
 
