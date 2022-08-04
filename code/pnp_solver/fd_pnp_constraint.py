@@ -272,7 +272,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                         charge_density, (grid_x, grid_y, grid_z), charge_xyz
                     )
 
-    def _solve_poisson_equation(self, max_iterations=500, soa_factor=0.01):
+    def _solve_poisson_equation(self, max_iterations=250, soa_factor=0.01):
         inv_square = (1 / self._grid.grid_width) ** 2
         # Charge density
         charge_density = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
@@ -345,7 +345,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             )
 
     def _solve_nernst_plank_equation(
-        self, ion_type: str, max_iterations=500, soa_factor=0.01
+        self, ion_type: str, max_iterations=250, soa_factor=0.01
     ):
         # Read input
         ion_valence = self._ion_valence_list[self._ion_type_list.index(ion_type)]
@@ -503,8 +503,8 @@ class FDPoissonNernstPlanckConstraint(Constraint):
 
     def update(
         self,
-        max_iterations=1000,
-        error_tolerance=1e-5,
+        max_iterations=2500,
+        error_tolerance=5e-4,
         check_freq=50,
         is_verbose=True,
         image_dir=False,
