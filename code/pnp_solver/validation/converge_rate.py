@@ -32,8 +32,11 @@ NUM_JOBS_PER_DEVICES = 2
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(CUR_DIR, "out/converge_rate")
 REFERENCE_GRID_FILE = os.path.join(OUT_DIR, "reference/res.grid")
-PE_MAX_TOLERANCE = 10e-7
-NPE_MAX_TOLERANCE = 5e-5
+ERROR_TOLERANCE = 1e-3
+
+
+def print_error(val):
+    print("Error", val)
 
 
 def generate_job_name(
@@ -48,7 +51,7 @@ def generate_job_name(
         pe_max_iterations,
         npe_max_iterations,
     )
-    judge = "judge-error-pe-%.0e-npe%.0e" % (PE_MAX_TOLERANCE, NPE_MAX_TOLERANCE)
+    judge = "judge-error-%.0e-" % (ERROR_TOLERANCE)
     new = "new-"
     if is_judge_error:
         name = judge + name
@@ -70,14 +73,15 @@ def job(
     str_dir: str,
     device_file_path: str,
     is_judge_error: bool = False,
+    is_new_judgement: bool = True,
 ):
-    pe_max_tolerance = npe_max_tolerance = 1e-10
-    if is_judge_error:
-        pe_max_tolerance = PE_MAX_TOLERANCE
-        npe_max_tolerance = NPE_MAX_TOLERANCE
     # Job name
     job_name = generate_job_name(
-        pe_max_iterations, npe_max_iterations, max_iterations, is_judge_error
+        pe_max_iterations,
+        npe_max_iterations,
+        max_iterations,
+        is_judge_error,
+        is_new_judgement,
     )
     out_dir = check_dir(os.path.join(root_dir, job_name))
     log_file = os.path.join(out_dir, "log.txt")
@@ -174,30 +178,31 @@ def job(
             # Solve PNP
             constraint._update_charge_density()
             for iteration in range(max_iterations):
-                iteration_vec = np.zeros(constraint._num_ion_types + 1)
-                error_vec = np.zeros(constraint._num_ion_types + 1)
-                iteration_vec[0], error_vec[0] = constraint._solve_poisson_equation(
-                    max_iterations=pe_max_iterations, error_tolerance=pe_max_tolerance
-                )
+                constraint._solve_poisson_equation(max_iterations=pe_max_iterations)
                 for i in range(constraint._num_ion_types):
-                    (
-                        iteration_vec[i + 1],
-                        error_vec[i + 1],
-                    ) = constraint._solve_nernst_plank_equation(
-                        constraint._ion_type_list[i],
-                        max_iterations=npe_max_iterations,
-                        error_tolerance=npe_max_tolerance,
+                    constraint._solve_nernst_plank_equation(
+                        constraint._ion_type_list[i], max_iterations=npe_max_iterations,
                     )
                 if iteration % 5 == 0:
+                    if iteration == 0:
+                        pre_list = constraint._get_current_field()
+                        continue
+                    cur_list = constraint._get_current_field()
+                    error = [
+                        constraint._calculate_error(i, j)
+                        for i, j in zip(cur_list, pre_list)
+                    ]
                     log = "Iteration: %d; " % iteration
-                    log += "PE: %d, %.3e; " % (iteration_vec[0], error_vec[0])
+                    log += "PE: %.3e; " % error[0]
                     for i in range(constraint._num_ion_types):
-                        log += "NPE %s: %d, %.3e; " % (
+                        log += "NPE %s: %.3e; " % (
                             constraint._ion_type_list[i],
-                            iteration_vec[i + 1],
-                            error_vec[i + 1],
+                            error[i + 1],
                         )
                     dump_log(log, log_file)
+                    if is_judge_error and np.mean(np.array(error)) <= ERROR_TOLERANCE:
+                        break
+                    pre_list = cur_list
             visualize_pnp_solution(constraint.grid, img_file)
             writer = md.io.GridWriter(grid_file)
             writer.write(constraint.grid)
@@ -243,8 +248,13 @@ job_list_03 = [[i, i, 500 ** 2 // i] for i in [50, 100, 150, 250, 300, 350, 400,
 job_list_04 = [[i, i, i] for i in [50, 100, 150, 250, 300, 350, 400, 450]]
 job_list_04 += [[250, 250, i] for i in [100, 150, 250, 300, 350, 400, 450, 500, 750]]
 
+# This job list give a estimation about new error judgement
+job_list_05 = [[i, i, 500 ** 2 // i] for i in [50, 100, 250, 500]]
 
-def submit_jobs(job_list: list, is_judge_error: bool = False):
+
+def submit_jobs(
+    job_list: list, is_judge_error: bool = False, is_new_judgement: bool = True,
+):
     # Dir
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.join(cur_dir, "out/converge_rate")
@@ -269,7 +279,9 @@ def submit_jobs(job_list: list, is_judge_error: bool = False):
                 str_dir,
                 device_file_path,
                 is_judge_error,
+                is_new_judgement,
             ),
+            error_callback=print_error,
         )
         sleep(0.5)
     pool.close()
@@ -291,13 +303,15 @@ def calculate_error(grid1: md.core.Grid, grid2: md.core.Grid):
     return error
 
 
-def analysis_jobs(job_list: list, is_judge_error: bool = False):
+def analysis_jobs(
+    job_list: list, is_judge_error: bool = False, is_new_judgement: bool = True
+):
     reference_grid = md.io.GridParser(REFERENCE_GRID_FILE).grid
     z_index = reference_grid.shape[2] // 2
     reference_sod_current = analysis(reference_grid, "sod", 1, z_index)
     reference_cla_current = analysis(reference_grid, "cla", -1, z_index)
     for job_info in job_list:
-        job_name = generate_job_name(*job_info, is_judge_error)
+        job_name = generate_job_name(*job_info, is_judge_error, is_new_judgement)
         grid = md.io.GridParser(os.path.join(OUT_DIR, job_name, "res.grid")).grid
         sod_current = analysis(grid, "sod", 1, z_index)
         cla_current = analysis(grid, "cla", -1, z_index)
@@ -330,7 +344,8 @@ def analysis_jobs(job_list: list, is_judge_error: bool = False):
 
 if __name__ == "__main__":
     # This judge the error judgement performance
-    analysis_jobs(job_list_04)
+    submit_jobs(job_list_05, is_new_judgement=True, is_judge_error=True)
+    analysis_jobs(job_list_05, is_new_judgement=True, is_judge_error=True)
     # analysis_jobs(job_list_03, is_judge_error=True)
     # analysis_jobs(job_list_01)
     # analysis_jobs(job_list_02)
