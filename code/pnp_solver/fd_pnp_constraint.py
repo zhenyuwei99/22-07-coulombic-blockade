@@ -172,6 +172,17 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 NUMBA_FLOAT[:, :, ::1],  # charge_density
             )
         )(self._bspline_interpretation_kernel)
+        self._is_verbose = False
+        self._log_file = None
+
+    def set_log_file(self, file_path: str, mode: str = "w"):
+        self._is_verbose = True
+        self._log_file = file_path
+        open(self._log_file, mode).close()
+
+    def _dump_log(self, text: str):
+        with open(self._log_file, "a") as f:
+            print(text, file=f)
 
     def __repr__(self) -> str:
         return "<mdpy.constraint.FDPoissonNernstPlanckConstraint object>"
@@ -536,13 +547,13 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                             self._ion_type_list[i],
                             error[i + 1],
                         )
-                    print(log)
+                    self._dump_log(log)
                 if np.mean(np.array(error)) <= error_tolerance:
                     break
                 pre_list = cur_list
         e = time.time()
         if is_verbose:
-            print("Finish at %d steps; Total time: %s" % (iteration, e - s))
+            self._dump_log("Finish at %d steps; Total time: %s" % (iteration, e - s))
 
     @property
     def grid(self) -> Grid:
