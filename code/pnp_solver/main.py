@@ -122,6 +122,7 @@ def job(
             constraint = FDPoissonNernstPlanckConstraint(
                 Quantity(300, kelvin), grid, sod=1, cla=-1
             )
+            constraint.set_log_file(log_file, "a")
             r = cp.sqrt(grid.coordinate.x ** 2 + grid.coordinate.y ** 2)
             alpha = 2
             nanopore_shape = 1 / (
