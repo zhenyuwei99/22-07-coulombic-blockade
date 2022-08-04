@@ -29,8 +29,13 @@ from manager import *
 generate_job_name = (
     lambda voltage: "pnp-minus-%.2f-volt" % abs(voltage)
     if voltage <= 0
-    else "pnp-plus-%.2f-volt" % abs(voltage)
+    else "pnp-plus-%.3f-volt" % abs(voltage)
 )
+
+
+def dump_log(text: str, file_path: str):
+    with open(file_path, "a") as f:
+        print(text, file=f)
 
 
 def check_dir(dir_path: str, restart=False):
@@ -57,12 +62,14 @@ def job(
     grid_file = os.path.join(out_dir, "res.grid")
     if not os.path.exists(grid_file):
         device, job = get_available_device(device_file_path)
+        open(log_file, "w").close()
         with md.device.Device(device):
-            sys.stdout = open(log_file, "w")
             register_device(device_file_path, device, job)
-            print(
+            start_time = datetime.now().replace(microsecond=0)
+            dump_log(
                 "Submit %s to device-%d-job-%d at %s"
-                % (job_name, device, job, datetime.now().replace(microsecond=0))
+                % (job_name, device, job, start_time),
+                log_file,
             )
             voltage = check_quantity_value(
                 voltage, default_energy_unit / default_charge_unit
@@ -83,9 +90,8 @@ def job(
                 .convert_to(default_length_unit ** 2 / default_time_unit)
                 .value
             )
-            extend_radius = radius * 1.1
-            shrink_radius = radius * 0.9
-            print("Start %s" % job_name)
+            extend_radius = radius * 1.05
+            shrink_radius = radius * 0.95
             # Read structure
             pdb = md.io.PDBParser(os.path.join(str_dir, "sio2_pore.pdb"))
             psf = md.io.PSFParser(os.path.join(str_dir, "sio2_pore.psf"))
@@ -161,9 +167,11 @@ def job(
             writer = GridWriter(grid_file)
             writer.write(constraint.grid)
         free_device(device_file_path, device, job)
-        print(
-            "Finish %s to device-%d-job-%d at %s"
-            % (job_name, device, job, datetime.now().replace(microsecond=0))
+        end_time = datetime.now().replace(microsecond=0)
+        dump_log(
+            "Finish %s to device-%d-job-%d at %s.\n Total time: %s"
+            % (job_name, device, job, end_time, end_time - start_time),
+            log_file,
         )
     else:
         print("Job %s exists, skipping current job" % job_name)
@@ -172,11 +180,11 @@ def job(
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     str_dir = os.path.join(cur_dir, "str")
-    root_dir = os.path.join(cur_dir, "out/15nm-pore-no-fixed")
+    root_dir = os.path.join(cur_dir, "out/10a-pore-no-fixed")
     os.system("rm -rf %s/*.png" % cur_dir)
     # Hyper parameter
-    radius = 15
-    sod_density = Quantity(0.5, mol / decimeter ** 3) * NA
+    radius = 10
+    sod_density = Quantity(1.0, mol / decimeter ** 3) * NA
     cla_density = sod_density
     # Manager
     num_devices = 4
@@ -187,7 +195,7 @@ if __name__ == "__main__":
         num_devices=num_devices,
         num_jobs_per_device=num_jobs_per_device,
     )
-    target_voltage = np.linspace(-2, 2, 200, endpoint=True)
+    target_voltage = np.linspace(-1, 1, 150, endpoint=True)
     interval = target_voltage.shape[0] // num_total_jobs
     pool = mp.Pool(num_total_jobs)
     for i in range(interval):
@@ -204,6 +212,7 @@ if __name__ == "__main__":
                     root_dir,
                     str_dir,
                 ),
+                error_callback=print,
             )
             sleep(0.5)
     pool.close()
