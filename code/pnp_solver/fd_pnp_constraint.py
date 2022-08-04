@@ -33,7 +33,7 @@ NP_DENSITY_THRESHOLD = (
     .convert_to(1 / default_length_unit ** 3)
     .value
 )
-ERROR_FREQ = 200
+ERROR_FREQ = 50
 
 
 def visualize_pnp_solution(grid, file_path: str):
@@ -53,8 +53,8 @@ def visualize_pnp_solution(grid, file_path: str):
         200,
     )
     ax[0].set_title("Electric Potential", fontsize=big_font)
-    ax[0].set_xlabel("x (A)", fontsize=big_font)
-    ax[0].set_ylabel("z (A)", fontsize=big_font)
+    ax[0].set_xlabel(r"x ($\AA$)", fontsize=big_font)
+    ax[0].set_ylabel(r"z ($\AA$)", fontsize=big_font)
     ax[0].tick_params(labelsize=mid_font)
     sod_density = (
         (
@@ -272,16 +272,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                         charge_density, (grid_x, grid_y, grid_z), charge_xyz
                     )
 
-    @staticmethod
-    def _calculate_error(array1: cp.ndarray, array2: cp.ndarray):
-        diff = cp.abs(array1 - array2)
-        denominator = cp.abs(0.5 * (array1 + array2))
-        denominator[denominator == 0] = 1e-9
-        return (diff / denominator).max()
-
-    def _solve_poisson_equation(
-        self, max_iterations=500, error_tolerance=1e-5, soa_factor=0.01
-    ):
+    def _solve_poisson_equation(self, max_iterations=500, soa_factor=0.01):
         inv_square = (1 / self._grid.grid_width) ** 2
         # Charge density
         charge_density = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
@@ -348,22 +339,13 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 for j in range(2):
                     nominator += relative_permittivity[i, j] * phi[i, j]
             nominator += charge_density
-            new = (
+            self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = (
                 soa_factor * self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
                 + (1 - soa_factor) * nominator * denominator
             )
-            if iteration % ERROR_FREQ == 0:
-                error = self._calculate_error(
-                    self._grid.field.electric_potential[1:-1, 1:-1, 1:-1], new
-                )
-                if error <= error_tolerance:
-                    self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = new
-                    break
-            self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = new
-        return (iteration, error)
 
     def _solve_nernst_plank_equation(
-        self, ion_type: str, max_iterations=500, error_tolerance=1e-5, soa_factor=0.01
+        self, ion_type: str, max_iterations=500, soa_factor=0.01
     ):
         # Read input
         ion_valence = self._ion_valence_list[self._ion_type_list.index(ion_type)]
@@ -481,13 +463,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             # For converge, avoiding extreme large result in the beginning of iteration
             new[new >= NP_DENSITY_THRESHOLD] = NP_DENSITY_THRESHOLD
             new[new <= -NP_DENSITY_THRESHOLD] = -NP_DENSITY_THRESHOLD
-            if iteration % ERROR_FREQ == 0:
-                error = self._calculate_error(ion_density[1:-1, 1:-1, 1:-1], new)
-                if error <= error_tolerance:
-                    ion_density[1:-1, 1:-1, 1:-1] = new
-                    break
             ion_density[1:-1, 1:-1, 1:-1] = new
-        return (iteration, error)
 
     def _update_charge_density(self):
         # Update bspline interpretation
@@ -508,7 +484,31 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             "charge_density", charge_density / cp.prod(self._grid.device_grid_width)
         )
 
-    def update(self, max_iterations=1000, is_verbose=True, image_dir=False):
+    def _get_current_field(self):
+        cur_field = [
+            self._grid.field.electric_potential * (~(self._grid.field.channel_shape))
+        ]
+        cur_field += [
+            getattr(self._grid.field, "%s_density" % i).copy()
+            for i in self._ion_type_list
+        ]
+        return cur_field
+
+    @staticmethod
+    def _calculate_error(array1: cp.ndarray, array2: cp.ndarray):
+        diff = array1 - array2
+        denominator = 0.5 * (array1 + array2)
+        denominator[denominator == 0] = 1e-9
+        return float((cp.abs(diff / denominator)).max())
+
+    def update(
+        self,
+        max_iterations=1000,
+        error_tolerance=1e-5,
+        check_freq=50,
+        is_verbose=True,
+        image_dir=False,
+    ):
         self._check_bound_state()
         self._update_charge_density()
         self._grid.check_requirement()
@@ -518,26 +518,29 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 visualize_pnp_solution(
                     self._grid, os.path.join(image_dir, "iteration-%d.png" % iteration)
                 )
-            iteration_vec = np.zeros(self._num_ion_types + 1)
-            error_vec = np.zeros(self._num_ion_types + 1)
-            iteration_vec[0], error_vec[0] = self._solve_poisson_equation()
+            self._solve_poisson_equation()
             for i in range(self._num_ion_types):
-                (
-                    iteration_vec[i + 1],
-                    error_vec[i + 1],
-                ) = self._solve_nernst_plank_equation(self._ion_type_list[i])
-            if is_verbose:
-                log = "Iteration: %d; " % iteration
-                log += "PE: %d, %.3e; " % (iteration_vec[0], error_vec[0])
-                for i in range(self._num_ion_types):
-                    log += "NPE %s: %d, %.3e; " % (
-                        self._ion_type_list[i],
-                        iteration_vec[i + 1],
-                        error_vec[i + 1],
-                    )
-                print(log)
-            # if np.all(iteration_vec == 0):
-            #     break
+                self._solve_nernst_plank_equation(self._ion_type_list[i])
+            if iteration % check_freq == 0:
+                if iteration == 0:
+                    pre_list = self._get_current_field()
+                    continue
+                cur_list = self._get_current_field()
+                error = [
+                    self._calculate_error(i, j) for i, j in zip(cur_list, pre_list)
+                ]
+                if is_verbose:
+                    log = "Iteration: %d; " % iteration
+                    log += "PE: %.3e; " % error[0]
+                    for i in range(self._num_ion_types):
+                        log += "NPE %s: %.3e; " % (
+                            self._ion_type_list[i],
+                            error[i + 1],
+                        )
+                    print(log)
+                if np.mean(np.array(error)) <= error_tolerance:
+                    break
+                pre_list = cur_list
         e = time.time()
         if is_verbose:
             print("Finish at %d steps; Total time: %s" % (iteration, e - s))
