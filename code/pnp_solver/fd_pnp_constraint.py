@@ -33,7 +33,6 @@ NP_DENSITY_THRESHOLD = (
     .convert_to(1 / default_length_unit ** 3)
     .value
 )
-ERROR_FREQ = 50
 
 
 def visualize_pnp_solution(grid, file_path: str):
