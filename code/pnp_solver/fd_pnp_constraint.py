@@ -55,10 +55,10 @@ def visualize_pnp_solution(grid, file_path: str):
     ax[0].set_xlabel(r"x ($\AA$)", fontsize=big_font)
     ax[0].set_ylabel(r"z ($\AA$)", fontsize=big_font)
     ax[0].tick_params(labelsize=mid_font)
-    sod_density = (
+    pot_density = (
         (
             Quantity(
-                grid.field.sod_density[1:-1, index, 1:-1].get(),
+                grid.field.pot_density[1:-1, index, 1:-1].get(),
                 1 / default_length_unit ** 3,
             )
             / NA
@@ -77,18 +77,18 @@ def visualize_pnp_solution(grid, file_path: str):
         .convert_to(mol / decimeter ** 3)
         .value
     )
-    max1 = float(sod_density.max())
+    max1 = float(pot_density.max())
     max2 = float(cla_density.max())
     max = max1 if max1 > max2 else max2
 
-    min1 = float(sod_density.min())
+    min1 = float(pot_density.min())
     min2 = float(cla_density.min())
     min = min1 if min1 < min2 else min2
     norm = matplotlib.colors.Normalize(vmin=min, vmax=max)
     c2 = ax[1].contourf(
         grid.coordinate.x[1:-1, index, 1:-1].get(),
         grid.coordinate.z[1:-1, index, 1:-1].get(),
-        sod_density,
+        pot_density,
         200,
         norm=norm,
     )
@@ -515,7 +515,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         self,
         max_iterations=2500,
         error_tolerance=5e-4,
-        check_freq=50,
+        check_freq=10,
         is_verbose=True,
         image_dir=False,
     ):
@@ -524,11 +524,11 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         self._grid.check_requirement()
         s = time.time()
         for iteration in range(max_iterations):
-            if image_dir and iteration % 20 == 0:
+            self._solve_poisson_equation()
+            if image_dir and iteration % 50 == 0:
                 visualize_pnp_solution(
                     self._grid, os.path.join(image_dir, "iteration-%d.png" % iteration)
                 )
-            self._solve_poisson_equation()
             for i in range(self._num_ion_types):
                 self._solve_nernst_plank_equation(self._ion_type_list[i])
             if iteration % check_freq == 0:
