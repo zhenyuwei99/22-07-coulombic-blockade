@@ -117,7 +117,7 @@ def job(
             grid = Grid(
                 x=[-pbc[0, 0] / 2, pbc[0, 0] / 2, 128],
                 y=[-pbc[1, 1] / 2, pbc[1, 1] / 2, 128],
-                z=[-pbc[2, 2] / 2, pbc[2, 2] / 2, 512],
+                z=[-pbc[2, 2] / 2, pbc[2, 2] / 2, 768],
             )
             constraint = FDPoissonNernstPlanckConstraint(
                 Quantity(300, kelvin), grid, pot=1, cla=-1
@@ -187,7 +187,7 @@ def job(
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     str_dir = os.path.join(cur_dir, "str")
-    root_dir = os.path.join(cur_dir, "out/5a-pore-150a-think")
+    root_dir = os.path.join(cur_dir, "out/5a-pore-250a-thick")
     os.system("rm -rf %s/*.png" % cur_dir)
     # Hyper parameter
     radius = 5
