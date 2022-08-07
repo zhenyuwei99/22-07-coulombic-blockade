@@ -92,7 +92,7 @@ def visualize_pnp_solution(grid, file_path: str):
         200,
         norm=norm,
     )
-    ax[1].set_title("SOD density", fontsize=big_font)
+    ax[1].set_title("POT density", fontsize=big_font)
     ax[1].set_xlabel(r"x ($\AA$)", fontsize=big_font)
     ax[1].tick_params(labelsize=mid_font)
     c3 = ax[2].contourf(
