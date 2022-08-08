@@ -174,11 +174,19 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         )(self._bspline_interpretation_kernel)
         self._is_verbose = False
         self._log_file = None
+        self._is_img = False
+        self._img_dir = None
 
     def set_log_file(self, file_path: str, mode: str = "w"):
         self._is_verbose = True
         self._log_file = file_path
         open(self._log_file, mode).close()
+
+    def set_img_dir(self, dir_path: str):
+        self._is_img = True
+        self._img_dir = dir_path
+        if not os.path.exists(self._img_dir):
+            os.mkdir(self._img_dir)
 
     def _dump_log(self, text: str):
         with open(self._log_file, "a") as f:
@@ -516,7 +524,6 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         max_iterations=2500,
         error_tolerance=5e-4,
         check_freq=10,
-        is_verbose=True,
         image_dir=False,
     ):
         self._check_bound_state()
@@ -525,7 +532,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         s = time.time()
         for iteration in range(max_iterations):
             self._solve_poisson_equation()
-            if image_dir and iteration % 50 == 0:
+            if self._is_img and iteration % 50 == 0:
                 visualize_pnp_solution(
                     self._grid, os.path.join(image_dir, "iteration-%d.png" % iteration)
                 )
@@ -539,7 +546,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 error = [
                     self._calculate_error(i, j) for i, j in zip(cur_list, pre_list)
                 ]
-                if is_verbose:
+                if self._is_verbose:
                     log = "Iteration: %d; " % iteration
                     log += "PE: %.3e; " % error[0]
                     for i in range(self._num_ion_types):
@@ -552,7 +559,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                     break
                 pre_list = cur_list
         e = time.time()
-        if is_verbose:
+        if self._is_verbose:
             self._dump_log("Finish at %d steps; Total time: %s" % (iteration, e - s))
 
     @property
