@@ -290,7 +290,28 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                         charge_density, (grid_x, grid_y, grid_z), charge_xyz
                     )
 
-    def _solve_poisson_equation(self, max_iterations=250, soa_factor=0.01):
+    def _generate_poisson_equation_coefficient(self):
+        inv_square = (1 / self._grid.grid_width) ** 2
+        pre_factor = cp.zeros(
+            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        )
+        inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
+        for i in range(self._grid.num_dimensions):
+            for j in range(2):
+                # 0 for plus and 1 for minus
+                target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
+                pre_factor[i, j] = (0.5 * inv_square[i]) * (
+                    self._grid.field.relative_permittivity[tuple(target_slice)]
+                    + self._grid.field.relative_permittivity[1:-1, 1:-1, 1:-1]
+                )
+                inv_denominator += pre_factor[i, j]
+        inv_denominator = CUPY_FLOAT(1) / inv_denominator
+        return pre_factor, inv_denominator
+
+    def _solve_fixed_charge_poisson_equation(
+        self, pre_factor, inv_denominator, max_iterations=1000, soa_factor=0.01
+    ):
         inv_square = (1 / self._grid.grid_width) ** 2
         # Charge density
         charge_density = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
@@ -302,65 +323,95 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             )
         charge_density += self._grid.field.charge_density[1:-1, 1:-1, 1:-1]
         charge_density *= self._k0
-        # Relative permittivity
-        relative_permittivity = cp.zeros(
-            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
-        )
-        denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
-        for i in range(self._grid.num_dimensions):
-            for j in range(2):
-                # 0 for plus and 1 for minus
-                target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
-                relative_permittivity[i, j] = (0.5 * inv_square[i]) * (
-                    self._grid.field.relative_permittivity[tuple(target_slice)]
-                    + self._grid.field.relative_permittivity[1:-1, 1:-1, 1:-1]
-                )
-                denominator += relative_permittivity[i, j]
-        denominator = 1 / denominator
         # Iteration
         phi = cp.zeros(
             [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
         )
-        for iteration in range(max_iterations):
+        electric_potential = cp.zeros(self._grid.shape, CUPY_FLOAT)
+        electric_potential[0, :, :] = self._grid.field.electric_potential[0, :, :]
+        electric_potential[-1, :, :] = self._grid.field.electric_potential[-1, :, :]
+        electric_potential[:, 0, :] = self._grid.field.electric_potential[:, 0, :]
+        electric_potential[:, -1, :] = self._grid.field.electric_potential[:, -1, :]
+        electric_potential[:, :, 0] = self._grid.field.electric_potential[:, :, 0]
+        electric_potential[:, :, -1] = self._grid.field.electric_potential[:, :, -1]
+        for _ in range(max_iterations):
             # X Neumann condition
-            phi[0, 0, :-1, :, :] = self._grid.field.electric_potential[2:-1, 1:-1, 1:-1]
+            phi[0, 0, :-1, :, :] = electric_potential[2:-1, 1:-1, 1:-1]
             phi[0, 0, -1, :, :] = (
-                self._grid.field.electric_potential[-2, 1:-1, 1:-1]
-                + self._grid.field.electric_potential[-1, 1:-1, 1:-1]
-                * self._grid.grid_width[0]
+                electric_potential[-2, 1:-1, 1:-1]
+                + electric_potential[-1, 1:-1, 1:-1] * self._grid.grid_width[0]
             )
-            phi[0, 1, 1:, :, :] = self._grid.field.electric_potential[1:-2, 1:-1, 1:-1]
+            phi[0, 1, 1:, :, :] = electric_potential[1:-2, 1:-1, 1:-1]
             phi[0, 1, 0, :, :] = (
-                self._grid.field.electric_potential[1, 1:-1, 1:-1]
-                - self._grid.field.electric_potential[0, 1:-1, 1:-1]
-                * self._grid.grid_width[0]
+                electric_potential[1, 1:-1, 1:-1]
+                - electric_potential[0, 1:-1, 1:-1] * self._grid.grid_width[0]
             )
             # Y Neumann
-            phi[1, 0, :, :-1, :] = self._grid.field.electric_potential[1:-1, 2:-1, 1:-1]
+            phi[1, 0, :, :-1, :] = electric_potential[1:-1, 2:-1, 1:-1]
             phi[1, 0, :, -1, :] = (
-                self._grid.field.electric_potential[1:-1, -2, 1:-1]
-                + self._grid.field.electric_potential[1:-1, -1, 1:-1]
-                * self._grid.grid_width[1]
+                electric_potential[1:-1, -2, 1:-1]
+                + electric_potential[1:-1, -1, 1:-1] * self._grid.grid_width[1]
             )
-            phi[1, 1, :, 1:, :] = self._grid.field.electric_potential[1:-1, 1:-2, 1:-1]
+            phi[1, 1, :, 1:, :] = electric_potential[1:-1, 1:-2, 1:-1]
             phi[1, 1, :, 0, :] = (
-                self._grid.field.electric_potential[1:-1, 1, 1:-1]
-                - self._grid.field.electric_potential[1:-1, 0, 1:-1]
-                * self._grid.grid_width[1]
+                electric_potential[1:-1, 1, 1:-1]
+                - electric_potential[1:-1, 0, 1:-1] * self._grid.grid_width[1]
             )
             # Z Dirichlet
-            phi[2, 0] = self._grid.field.electric_potential[1:-1, 1:-1, 2:]
-            phi[2, 1] = self._grid.field.electric_potential[1:-1, 1:-1, :-2]
+            phi[2, 0] = electric_potential[1:-1, 1:-1, 2:]
+            phi[2, 1] = electric_potential[1:-1, 1:-1, :-2]
             nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
             for i in range(self._grid.num_dimensions):
                 for j in range(2):
-                    nominator += relative_permittivity[i, j] * phi[i, j]
+                    nominator += pre_factor[i, j] * phi[i, j]
             nominator += charge_density
-            self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = (
-                soa_factor * self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
-                + (1 - soa_factor) * nominator * denominator
+            electric_potential[1:-1, 1:-1, 1:-1] = (
+                soa_factor * electric_potential[1:-1, 1:-1, 1:-1]
+                + (1 - soa_factor) * nominator * inv_denominator
             )
+        return electric_potential
+
+    def _solve_ion_poisson_equation(
+        self, pre_factor, inv_denominator, max_iterations=50, soa_factor=0.01
+    ):
+        # Charge density
+        charge_density = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        for i in range(self._num_ion_types):
+            attribute_name = self._ion_type_list[i] + "_density"
+            charge_density += (
+                self._ion_valence_list[i]
+                * getattr(self._grid.field, attribute_name)[1:-1, 1:-1, 1:-1]
+            )
+        charge_density *= self._k0
+        # Iteration
+        phi = cp.zeros(
+            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        )
+        electric_potential = cp.zeros(self._grid.shape, CUPY_FLOAT)
+        for _ in range(max_iterations):
+            # X Neumann condition (All zero)
+            phi[0, 0, :-1, :, :] = electric_potential[2:-1, 1:-1, 1:-1]
+            phi[0, 0, -1, :, :] = electric_potential[-2, 1:-1, 1:-1]
+            phi[0, 1, 1:, :, :] = electric_potential[1:-2, 1:-1, 1:-1]
+            phi[0, 1, 0, :, :] = electric_potential[1, 1:-1, 1:-1]
+            # Y Neumann (All zero)
+            phi[1, 0, :, :-1, :] = electric_potential[1:-1, 2:-1, 1:-1]
+            phi[1, 0, :, -1, :] = electric_potential[1:-1, -2, 1:-1]
+            phi[1, 1, :, 1:, :] = electric_potential[1:-1, 1:-2, 1:-1]
+            phi[1, 1, :, 0, :] = electric_potential[1:-1, 1, 1:-1]
+            # Z Dirichlet (All zero)
+            phi[2, 0] = electric_potential[1:-1, 1:-1, 2:]
+            phi[2, 1] = electric_potential[1:-1, 1:-1, :-2]
+            nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+            for i in range(self._grid.num_dimensions):
+                for j in range(2):
+                    nominator += pre_factor[i, j] * phi[i, j]
+            nominator += charge_density
+            electric_potential[1:-1, 1:-1, 1:-1] = (
+                soa_factor * electric_potential[1:-1, 1:-1, 1:-1]
+                + (1 - soa_factor) * nominator * inv_denominator
+            )
+        return electric_potential
 
     def _solve_nernst_plank_equation(
         self, ion_type: str, max_iterations=250, soa_factor=0.01
@@ -520,18 +571,23 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         return float((cp.abs(diff / denominator)).max())
 
     def update(
-        self,
-        max_iterations=2500,
-        error_tolerance=5e-4,
-        check_freq=10,
-        image_dir=False,
+        self, max_iterations=2500, error_tolerance=5e-4, check_freq=10, image_dir=False,
     ):
         self._check_bound_state()
         self._update_charge_density()
         self._grid.check_requirement()
+        pre_factor, inv_denominator = self._generate_poisson_equation_coefficient()
+        fixed_charge_electric_potential = self._solve_fixed_charge_poisson_equation(
+            pre_factor, inv_denominator
+        )
         s = time.time()
         for iteration in range(max_iterations):
-            self._solve_poisson_equation()
+            ion_electric_potential = self._solve_ion_poisson_equation(
+                pre_factor, inv_denominator
+            )
+            self._grid.field.electric_potential = (
+                fixed_charge_electric_potential + ion_electric_potential
+            )
             if self._is_img and iteration % 50 == 0:
                 visualize_pnp_solution(
                     self._grid, os.path.join(image_dir, "iteration-%d.png" % iteration)
