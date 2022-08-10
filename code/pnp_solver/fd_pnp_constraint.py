@@ -310,17 +310,11 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         return pre_factor, inv_denominator
 
     def _solve_fixed_charge_poisson_equation(
-        self, pre_factor, inv_denominator, max_iterations=1000, soa_factor=0.01
+        self, pre_factor, inv_denominator, max_iterations=1000, sor_factor=0.9
     ):
         inv_square = (1 / self._grid.grid_width) ** 2
         # Charge density
         charge_density = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        for i in range(self._num_ion_types):
-            attribute_name = self._ion_type_list[i] + "_density"
-            charge_density += (
-                self._ion_valence_list[i]
-                * getattr(self._grid.field, attribute_name)[1:-1, 1:-1, 1:-1]
-            )
         charge_density += self._grid.field.charge_density[1:-1, 1:-1, 1:-1]
         charge_density *= self._k0
         # Iteration
@@ -366,13 +360,13 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                     nominator += pre_factor[i, j] * phi[i, j]
             nominator += charge_density
             electric_potential[1:-1, 1:-1, 1:-1] = (
-                soa_factor * electric_potential[1:-1, 1:-1, 1:-1]
-                + (1 - soa_factor) * nominator * inv_denominator
+                (1 - sor_factor) * electric_potential[1:-1, 1:-1, 1:-1]
+                + sor_factor * nominator * inv_denominator
             )
         return electric_potential
 
     def _solve_ion_poisson_equation(
-        self, pre_factor, inv_denominator, max_iterations=50, soa_factor=0.01
+        self, pre_factor, inv_denominator, max_iterations=100, sor_factor=0.9
     ):
         # Charge density
         charge_density = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
@@ -408,13 +402,13 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                     nominator += pre_factor[i, j] * phi[i, j]
             nominator += charge_density
             electric_potential[1:-1, 1:-1, 1:-1] = (
-                soa_factor * electric_potential[1:-1, 1:-1, 1:-1]
-                + (1 - soa_factor) * nominator * inv_denominator
+                (1 - sor_factor) * electric_potential[1:-1, 1:-1, 1:-1]
+                + sor_factor * nominator * inv_denominator
             )
         return electric_potential
 
     def _solve_nernst_plank_equation(
-        self, ion_type: str, max_iterations=250, soa_factor=0.01
+        self, ion_type: str, max_iterations=100, sor_factor=0.9
     ):
         # Read input
         ion_valence = self._ion_valence_list[self._ion_type_list.index(ion_type)]
@@ -525,14 +519,25 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             for i in range(self._grid.num_dimensions):
                 for j in range(2):
                     nominator += channel_mask[i, j] * energy[i, j] * density[i, j]
-            new = (
-                soa_factor * ion_density[1:-1, 1:-1, 1:-1]
-                + (1 - soa_factor) * nominator * denominator
-            )
+            new = (1 - sor_factor) * ion_density[
+                1:-1, 1:-1, 1:-1
+            ] + sor_factor * nominator * denominator
             # For converge, avoiding extreme large result in the beginning of iteration
             new[new >= NP_DENSITY_THRESHOLD] = NP_DENSITY_THRESHOLD
             new[new <= -NP_DENSITY_THRESHOLD] = -NP_DENSITY_THRESHOLD
             ion_density[1:-1, 1:-1, 1:-1] = new
+
+    def _initialize_ion_density(self):
+        for ion_type, ion_valence in zip(self._ion_type_list, self._ion_valence_list):
+            origin_density_array = getattr(self._grid.field, "%s_density" % ion_type)
+            density_array = cp.exp(
+                -self._beta
+                * ion_valence
+                * self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
+            )
+            density_array /= density_array.mean()
+            density_array *= origin_density_array[1, 1, 0]  # Z direction boundary
+            origin_density_array[1:-1, 1:-1, 1:-1] = density_array
 
     def _update_charge_density(self):
         # Update bspline interpretation
@@ -580,15 +585,16 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         fixed_charge_electric_potential = self._solve_fixed_charge_poisson_equation(
             pre_factor, inv_denominator
         )
+        self._initialize_ion_density()
         s = time.time()
         for iteration in range(max_iterations):
             ion_electric_potential = self._solve_ion_poisson_equation(
                 pre_factor, inv_denominator
             )
-            self._grid.field.electric_potential = (
+            self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = (
                 fixed_charge_electric_potential + ion_electric_potential
-            )
-            if self._is_img and iteration % 50 == 0:
+            )[1:-1, 1:-1, 1:-1]
+            if self._is_img and iteration % 10 == 0:
                 visualize_pnp_solution(
                     self._grid, os.path.join(image_dir, "iteration-%d.png" % iteration)
                 )
