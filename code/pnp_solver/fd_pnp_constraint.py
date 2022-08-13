@@ -339,7 +339,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 pre_factor[0, 1, 1:, :, :]
                 * self._grid.field.electric_potential[1:-2, 1:-1, 1:-1]
             )
-            nominator[1, :, :] += pre_factor[0, 1, 1, :, :] * (
+            nominator[0, :, :] += pre_factor[0, 1, 1, :, :] * (
                 self._grid.field.electric_potential[1, 1:-1, 1:-1]
                 - self._grid.field.electric_potential[0, 1:-1, 1:-1]
                 * self._grid.grid_width[0]
@@ -358,7 +358,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 pre_factor[1, 1, :, 1:, :]
                 * self._grid.field.electric_potential[1:-1, 1:-2, 1:-1]
             )
-            nominator[:, -1, :] += pre_factor[1, 1, :, -1, :] * (
+            nominator[:, 0, :] += pre_factor[1, 1, :, -1, :] * (
                 self._grid.field.electric_potential[1:-1, 1, 1:-1]
                 - self._grid.field.electric_potential[1:-1, 0, 1:-1]
                 * self._grid.grid_width[1]
@@ -376,26 +376,8 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 + (1 - soa_factor) * nominator * inv_denominator
             )
 
-    def _solve_nernst_plank_equation(
-        self, ion_type: str, max_iterations=250, soa_factor=0.05
-    ):
-        # Read input
-        ion_valence = self._ion_valence_list[self._ion_type_list.index(ion_type)]
-        ion_density = getattr(self._grid.field, ion_type + "_density")
-        diffusion_coefficient = getattr(
-            self._grid.field, ion_type + "_diffusion_coefficient"
-        )
-        inv_square = (1 / self._grid.grid_width) ** 2
+    def _generate_channel_mask(self):
         channel_mask = cp.zeros(
-            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
-        )  # True for no-boundary
-        energy = cp.zeros(
-            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
-        )
-        diffusion = cp.zeros(
-            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
-        )
-        density = cp.zeros(
             [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
         )
         target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
@@ -407,11 +389,43 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                     self._grid.field.channel_shape[tuple(target_slice)]
                     == self._grid.field.channel_shape[1:-1, 1:-1, 1:-1]
                 ) & (self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] == 0)
+                target_slice[i] = slice(1, -1)
+        return channel_mask
+
+    def _generate_nernst_plank_equation_coefficient(self, ion_type: str):
+        inv_square = (1 / self._grid.grid_width) ** 2
+        diffusion_coefficient = getattr(
+            self._grid.field, ion_type + "_diffusion_coefficient"
+        )
+        diffusion = cp.zeros(
+            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        )
+        target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
+        for i in range(self._grid.num_dimensions):
+            for j in [0, 1]:
+                # 0 for plus and 1 for minus
+                target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
                 diffusion[i, j] = (0.5 * inv_square[i]) * (
                     diffusion_coefficient[tuple(target_slice)]
                     + diffusion_coefficient[1:-1, 1:-1, 1:-1]
                 )
                 target_slice[i] = slice(1, -1)
+        return diffusion
+
+    def _solve_nernst_plank_equation(
+        self,
+        ion_type: str,
+        channel_mask,
+        diffusion_coefficient,
+        max_iterations=250,
+        soa_factor=0.05,
+    ):
+        # Read input
+        ion_valence = self._ion_valence_list[self._ion_type_list.index(ion_type)]
+        ion_density = getattr(self._grid.field, ion_type + "_density")
+        energy = cp.zeros(
+            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        )
         ## X Neumann condition
         energy[0, 0, :-1, :, :] = self._grid.field.electric_potential[2:-1, 1:-1, 1:-1]
         energy[0, 0, -1, :, :] = (
@@ -445,52 +459,58 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         energy *= self._beta * 0.5 * ion_valence
         # Denominator
         energy = 1 - energy  # 1 - V
-        denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         for i in range(self._grid.num_dimensions):
             for j in range(2):
-                denominator += channel_mask[i, j] * diffusion[i, j] * energy[i, j]
+                inv_denominator += (
+                    channel_mask[i, j] * diffusion_coefficient[i, j] * energy[i, j]
+                )
         # For non-zero denominator, Add a small value for non-pore area
         threshold = 1e-8
-        denominator += self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] * threshold
-        denominator = 1 / denominator
+        inv_denominator += self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] * threshold
+        inv_denominator = CUPY_FLOAT(1) / inv_denominator
         energy = 2 - energy  # 1 + V
         for i in range(self._grid.num_dimensions):
             for j in range(2):
-                energy[i, j] *= diffusion[i, j]
-
+                energy[i, j] *= diffusion_coefficient[i, j] * channel_mask[i, j]
         for iteration in range(max_iterations):
+            nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
             # X Neumann condition
-            density[0, 0, :-1, :, :] = ion_density[2:-1, 1:-1, 1:-1]
-            density[0, 0, -1, :, :] = (
+            nominator[:-1, :, :] += (
+                energy[0, 0, :-1, :, :] * ion_density[2:-1, 1:-1, 1:-1]
+            )
+            nominator[-1, :, :] += energy[0, 0, -1, :, :] * (
                 ion_density[-2, 1:-1, 1:-1]
                 + ion_density[-1, 1:-1, 1:-1] * self._grid.grid_width[0]
             )
-            density[0, 1, 1:, :, :] = ion_density[1:-2, 1:-1, 1:-1]
-            density[0, 1, 0, :, :] = (
+            nominator[1:, :, :] += (
+                energy[0, 1, 1:, :, :] * ion_density[1:-2, 1:-1, 1:-1]
+            )
+            nominator[0, :, :] += energy[0, 1, 1, :, :] * (
                 ion_density[1, 1:-1, 1:-1]
                 - ion_density[0, 1:-1, 1:-1] * self._grid.grid_width[0]
             )
             # Y Neumann
-            density[1, 0, :, :-1, :] = ion_density[1:-1, 2:-1, 1:-1]
-            density[1, 0, :, -1, :] = (
+            nominator[:, :-1, :] += (
+                energy[1, 0, :, :-1, :] * ion_density[1:-1, 2:-1, 1:-1]
+            )
+            nominator[:, -1, :] += energy[1, 0, :, -1, :] * (
                 ion_density[1:-1, -2, 1:-1]
                 + ion_density[1:-1, -1, 1:-1] * self._grid.grid_width[1]
             )
-            density[1, 1, :, 1:, :] = ion_density[1:-1, 1:-2, 1:-1]
-            density[1, 1, :, 0, :] = (
+            nominator[:, 1:, :] += (
+                energy[1, 1, :, 1:, :] * ion_density[1:-1, 1:-2, 1:-1]
+            )
+            nominator[:, 0, :] += energy[1, 1, :, -1, :] * (
                 ion_density[1:-1, 1, 1:-1]
                 - ion_density[1:-1, 0, 1:-1] * self._grid.grid_width[1]
             )
-            # Z Neumann
-            density[2, 0] = ion_density[1:-1, 1:-1, 2:]
-            density[2, 1] = ion_density[1:-1, 1:-1, :-2]
-            nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-            for i in range(self._grid.num_dimensions):
-                for j in range(2):
-                    nominator += channel_mask[i, j] * energy[i, j] * density[i, j]
+            # Z Dirichlet
+            nominator += energy[2, 0] * ion_density[1:-1, 1:-1, 2:]
+            nominator += energy[2, 1] * ion_density[1:-1, 1:-1, :-2]
             new = (
                 soa_factor * ion_density[1:-1, 1:-1, 1:-1]
-                + (1 - soa_factor) * nominator * denominator
+                + (1 - soa_factor) * nominator * inv_denominator
             )
             # For converge, avoiding extreme large result in the beginning of iteration
             new[new >= NP_DENSITY_THRESHOLD] = NP_DENSITY_THRESHOLD
@@ -540,14 +560,22 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         self._update_charge_density()
         self._grid.check_requirement()
         s = time.time()
+        pre_factor, inv_denominator = self._generate_poisson_equation_coefficient()
+        channel_mask = self._generate_channel_mask()
+        diffusion_coefficient_list = [
+            self._generate_nernst_plank_equation_coefficient(i)
+            for i in self._ion_type_list
+        ]
         for iteration in range(max_iterations):
-            self._solve_poisson_equation()
+            self._solve_poisson_equation(pre_factor, inv_denominator)
             if self._is_img and iteration % 50 == 0:
                 visualize_pnp_solution(
                     self._grid, os.path.join(image_dir, "iteration-%d.png" % iteration)
                 )
             for i in range(self._num_ion_types):
-                self._solve_nernst_plank_equation(self._ion_type_list[i])
+                self._solve_nernst_plank_equation(
+                    self._ion_type_list[i], channel_mask, diffusion_coefficient_list[i],
+                )
             if iteration % check_freq == 0:
                 if iteration == 0:
                     pre_list = self._get_current_field()
