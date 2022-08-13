@@ -172,6 +172,8 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 NUMBA_FLOAT[:, :, ::1],  # charge_density
             )
         )(self._bspline_interpretation_kernel)
+        # Flag
+        self._is_nernst_plank_equation_within_tolerance = False
         self._is_verbose = False
         self._log_file = None
         self._is_img = False
@@ -376,7 +378,14 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 + (1 - soa_factor) * nominator * inv_denominator
             )
 
-    def _generate_channel_mask(self):
+    def _generate_nernst_plank_equation_coefficient(self, ion_type: str):
+        inv_square = (1 / self._grid.grid_width) ** 2
+        diffusion_coefficient = getattr(
+            self._grid.field, ion_type + "_diffusion_coefficient"
+        )
+        diffusion = cp.zeros(
+            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        )
         channel_mask = cp.zeros(
             [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
         )
@@ -389,36 +398,25 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                     self._grid.field.channel_shape[tuple(target_slice)]
                     == self._grid.field.channel_shape[1:-1, 1:-1, 1:-1]
                 ) & (self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] == 0)
-                target_slice[i] = slice(1, -1)
-        return channel_mask
-
-    def _generate_nernst_plank_equation_coefficient(self, ion_type: str):
-        inv_square = (1 / self._grid.grid_width) ** 2
-        diffusion_coefficient = getattr(
-            self._grid.field, ion_type + "_diffusion_coefficient"
-        )
-        diffusion = cp.zeros(
-            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
-        )
-        target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
-        for i in range(self._grid.num_dimensions):
-            for j in [0, 1]:
-                # 0 for plus and 1 for minus
-                target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
                 diffusion[i, j] = (0.5 * inv_square[i]) * (
                     diffusion_coefficient[tuple(target_slice)]
                     + diffusion_coefficient[1:-1, 1:-1, 1:-1]
                 )
                 target_slice[i] = slice(1, -1)
-        return diffusion
+        return diffusion * channel_mask
+
+    def _check_nernst_plank_equation_judgement(self):
+        # Only judge once
+        if not self._is_nernst_plank_equation_within_tolerance:
+            is_within_tolerance = True
+            for ion_type in self._ion_type_list:
+                ion_density = getattr(self._grid.field, ion_type + "_density")
+                if cp.count_nonzero(ion_density >= NP_DENSITY_THRESHOLD):
+                    is_within_tolerance = False
+            self._is_nernst_plank_equation_within_tolerance = is_within_tolerance
 
     def _solve_nernst_plank_equation(
-        self,
-        ion_type: str,
-        channel_mask,
-        diffusion_coefficient,
-        max_iterations=250,
-        soa_factor=0.05,
+        self, ion_type: str, pre_factor, max_iterations=250, soa_factor=0.05,
     ):
         # Read input
         ion_valence = self._ion_valence_list[self._ion_type_list.index(ion_type)]
@@ -462,9 +460,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         for i in range(self._grid.num_dimensions):
             for j in range(2):
-                inv_denominator += (
-                    channel_mask[i, j] * diffusion_coefficient[i, j] * energy[i, j]
-                )
+                inv_denominator += pre_factor[i, j] * energy[i, j]
         # For non-zero denominator, Add a small value for non-pore area
         threshold = 1e-8
         inv_denominator += self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] * threshold
@@ -472,7 +468,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         energy = 2 - energy  # 1 + V
         for i in range(self._grid.num_dimensions):
             for j in range(2):
-                energy[i, j] *= diffusion_coefficient[i, j] * channel_mask[i, j]
+                energy[i, j] *= pre_factor[i, j]
         for iteration in range(max_iterations):
             nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
             # X Neumann condition
@@ -513,8 +509,9 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 + (1 - soa_factor) * nominator * inv_denominator
             )
             # For converge, avoiding extreme large result in the beginning of iteration
-            new[new >= NP_DENSITY_THRESHOLD] = NP_DENSITY_THRESHOLD
-            new[new <= -NP_DENSITY_THRESHOLD] = -NP_DENSITY_THRESHOLD
+            if not self._is_nernst_plank_equation_within_tolerance:
+                new[new >= NP_DENSITY_THRESHOLD] = NP_DENSITY_THRESHOLD
+                new[new <= -NP_DENSITY_THRESHOLD] = -NP_DENSITY_THRESHOLD
             ion_density[1:-1, 1:-1, 1:-1] = new
 
     def _update_charge_density(self):
@@ -561,8 +558,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         self._grid.check_requirement()
         s = time.time()
         pre_factor, inv_denominator = self._generate_poisson_equation_coefficient()
-        channel_mask = self._generate_channel_mask()
-        diffusion_coefficient_list = [
+        pre_factor_list = [
             self._generate_nernst_plank_equation_coefficient(i)
             for i in self._ion_type_list
         ]
@@ -574,8 +570,9 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 )
             for i in range(self._num_ion_types):
                 self._solve_nernst_plank_equation(
-                    self._ion_type_list[i], channel_mask, diffusion_coefficient_list[i],
+                    self._ion_type_list[i], pre_factor_list[i],
                 )
+            self._check_nernst_plank_equation_judgement()
             if iteration % check_freq == 0:
                 if iteration == 0:
                     pre_list = self._get_current_field()
@@ -592,6 +589,10 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                             self._ion_type_list[i],
                             error[i + 1],
                         )
+                    log += (
+                        "NPE with tolerance: %s"
+                        % self._is_nernst_plank_equation_within_tolerance
+                    )
                     self._dump_log(log)
                 if np.mean(np.array(error)) <= error_tolerance:
                     break
