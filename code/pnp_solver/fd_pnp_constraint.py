@@ -8,7 +8,6 @@ copyright : (C)Copyright 2021-present, mdpy organization
 """
 
 import os
-import time
 import math
 import numpy as np
 import numba as nb
@@ -16,6 +15,7 @@ import numba.cuda as cuda
 import cupy as cp
 import matplotlib
 import matplotlib.pyplot as plt
+from datetime import datetime
 from mdpy import SPATIAL_DIM
 from mdpy.environment import *
 from mdpy.core import Ensemble, Grid
@@ -383,10 +383,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         diffusion_coefficient = getattr(
             self._grid.field, ion_type + "_diffusion_coefficient"
         )
-        diffusion = cp.zeros(
-            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
-        )
-        channel_mask = cp.zeros(
+        pre_factor = cp.zeros(
             [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
         )
         target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
@@ -394,16 +391,22 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             for j in [0, 1]:
                 # 0 for plus and 1 for minus
                 target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
-                channel_mask[i, j] = (
-                    self._grid.field.channel_shape[tuple(target_slice)]
-                    == self._grid.field.channel_shape[1:-1, 1:-1, 1:-1]
-                ) & (self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] == 0)
-                diffusion[i, j] = (0.5 * inv_square[i]) * (
-                    diffusion_coefficient[tuple(target_slice)]
-                    + diffusion_coefficient[1:-1, 1:-1, 1:-1]
+                pre_factor[i, j] = (
+                    (
+                        (
+                            self._grid.field.channel_shape[tuple(target_slice)]
+                            == self._grid.field.channel_shape[1:-1, 1:-1, 1:-1]
+                        )
+                        & (self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] == 0)
+                    )
+                    * (0.5 * inv_square[i])
+                    * (
+                        diffusion_coefficient[tuple(target_slice)]
+                        + diffusion_coefficient[1:-1, 1:-1, 1:-1]
+                    )
                 )
                 target_slice[i] = slice(1, -1)
-        return diffusion * channel_mask
+        return pre_factor
 
     def _check_nernst_plank_equation_judgement(self):
         # Only judge once
@@ -456,7 +459,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         energy -= self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
         energy *= self._beta * 0.5 * ion_valence
         # Denominator
-        energy = 1 - energy  # 1 - V
+        energy = CUPY_FLOAT(1) - energy  # 1 - V
         inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         for i in range(self._grid.num_dimensions):
             for j in range(2):
@@ -465,7 +468,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         threshold = 1e-8
         inv_denominator += self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] * threshold
         inv_denominator = CUPY_FLOAT(1) / inv_denominator
-        energy = 2 - energy  # 1 + V
+        energy = CUPY_FLOAT(2) - energy  # 1 + V
         for i in range(self._grid.num_dimensions):
             for j in range(2):
                 energy[i, j] *= pre_factor[i, j]
@@ -551,12 +554,13 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         return float((cp.abs(diff / denominator)[20:-20, 20:-20, 20:-20]).max())
 
     def update(
-        self, max_iterations=2500, error_tolerance=1e-4, check_freq=50, image_dir=False,
+        self, max_iterations=2500, error_tolerance=1e-3, check_freq=50, image_dir=False,
     ):
         self._check_bound_state()
         self._update_charge_density()
         self._grid.check_requirement()
-        s = time.time()
+        start_time = datetime.now().replace(microsecond=0)
+        self._dump_log("Start at %s" % start_time)
         pre_factor, inv_denominator = self._generate_poisson_equation_coefficient()
         pre_factor_list = [
             self._generate_nernst_plank_equation_coefficient(i)
@@ -564,13 +568,13 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         ]
         for iteration in range(max_iterations):
             self._solve_poisson_equation(pre_factor, inv_denominator)
-            if self._is_img and iteration % 50 == 0:
-                visualize_pnp_solution(
-                    self._grid, os.path.join(image_dir, "iteration-%d.png" % iteration)
-                )
             for i in range(self._num_ion_types):
                 self._solve_nernst_plank_equation(
                     self._ion_type_list[i], pre_factor_list[i],
+                )
+            if self._is_img and iteration % 100 == 0:
+                visualize_pnp_solution(
+                    self._grid, os.path.join(image_dir, "iteration-%d.png" % iteration)
                 )
             self._check_nernst_plank_equation_judgement()
             if iteration % check_freq == 0:
@@ -594,12 +598,15 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                         % self._is_nernst_plank_equation_within_tolerance
                     )
                     self._dump_log(log)
-                if np.mean(np.array(error)) <= error_tolerance:
+                if np.mean(np.array(error)[1:]) <= error_tolerance:
                     break
                 pre_list = cur_list
-        e = time.time()
+        end_time = datetime.now().replace(microsecond=0)
         if self._is_verbose:
-            self._dump_log("Finish at %d steps; Total time: %s" % (iteration, e - s))
+            self._dump_log(
+                "Finish at %d steps; Total time: %s"
+                % (iteration, end_time - start_time)
+            )
 
     @property
     def grid(self) -> Grid:
