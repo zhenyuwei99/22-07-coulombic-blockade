@@ -57,7 +57,7 @@ def analysis(
 
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    out_dir = os.path.join(cur_dir, "out/5a-pore-250a-thick")
+    out_dir = os.path.join(cur_dir, "out/test")
     file_name = out_dir.split("/")[-1]
     target_files = [
         os.path.join(out_dir, i, "res.grid")
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         list(i) for i in zip(*sorted(zip(ele_list, target_files)))
     ]
     for target_file in target_files:
-        index = 256
+        index = 128
         grid = md.io.GridParser(target_file).grid
         pot_res.append(analysis(grid, "pot", 1, index))
         cla_res.append(analysis(grid, "cla", -1, index))
@@ -108,17 +108,18 @@ if __name__ == "__main__":
         color="navy",
     )
     if True:
-        experiment_file = os.path.join(cur_dir, "experiment/1nm-1mol.xlsx")
+        experiment_file = os.path.join(cur_dir, "experiment/4nm-1mol-01.xlsx")
         df = pd.read_excel(experiment_file, header=None)
         ele_list = np.array(df[0]) / 1000
-        current_list = np.array(df[1])
-        if False:
+        current_list = np.array(df[2])
+        if True:
             ele_list *= -1
             current_list *= -1
         ax.plot(ele_list, current_list, ".-", label="Experiment", color="brown")
     ax.set_xlabel("Voltage (V)", fontsize=font_big)
     ax.set_ylabel("Current (A)", fontsize=font_big)
     ax.tick_params(labelsize=font_mid)
+    ax.set_ylim(-8e-9, 4e-9)
     ax.legend(fontsize=font_big)
     fig.tight_layout()
     plt.savefig(os.path.join(cur_dir, file_name + ".png"))
