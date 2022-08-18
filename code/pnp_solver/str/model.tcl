@@ -9,10 +9,20 @@ package require inorganicbuilder
 package require solvate
 package require autoionize
 
+proc center {molid sel} {
+set selprot [atomselect $molid $sel]
+set center_prot [measure center $selprot]
+set transfo [transoffset [vecinvert $center_prot]]
+puts $transfo
+$selprot move $transfo
+set new_center_prot [measure center $selprot]
+puts $new_center_prot
+}
 
 # Parameters
-set box_size {20 20 5}; # # of lattice
-set pore_radius 10; # Angstrom
+set box_size {20 20 35}; # # of lattice
+set pore_radius 20; # Angstrom
+set pore_angle 10.0
 
 # File name
 set sio2_file_name sio2
@@ -29,6 +39,7 @@ inorganicBuilder::buildBox $box $sio2_file_name
 
 inorganicBuilder::buildSpecificBonds $box {{SI O 1.61}} {true true false} top
 
+center top "all"
 set all [atomselect top all]
 $all writepsf $sio2_file_name.psf
 $all writepdb $sio2_file_name.pdb
@@ -37,8 +48,12 @@ $all writepdb $sio2_file_name.pdb
 set psf $sio2_file_name.psf
 set pdb $sio2_file_name.pdb
 
+set pi [expr {4.0*atan(1.0)}]
+set s0 [expr {0.5*$pore_radius}]
+set slope [expr {tan($pore_angle*$pi/180.0)}]
 mol load psf $psf pdb $pdb
 set pore [atomselect top "sqrt(x^2 + y^2) < $pore_radius"]
+# set pore [atomselect top "sqrt(x^2 + y^2) < $s0 + $slope*abs(z)"]
 set pore_atoms [$pore get {segname resid name}]
 $pore delete
 mol delete top
