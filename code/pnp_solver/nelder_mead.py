@@ -13,10 +13,13 @@ import numpy as np
 
 
 class NelderMeadMinimizer:
-    def __init__(self, objective_fun, num_dimensions: int) -> None:
+    def __init__(
+        self, objective_fun, num_dimensions: int, result_file_path: str = "minimize.npz"
+    ) -> None:
         # Read input
         self._objective_fun = objective_fun
         self._num_dimensions = num_dimensions
+        self._file_path = result_file_path
         # Set attributes
         self._simplex_history: list = []
         self._num_stored_vertices = 0
@@ -49,6 +52,9 @@ class NelderMeadMinimizer:
             vertex[0, : self._num_dimensions] = coordinate[:]
             vertex[0, self._num_dimensions] = value
             self._vertex_history = np.vstack([self._vertex_history, vertex])
+            self._vertex_history = self._vertex_history[
+                self._vertex_history[:, self._num_dimensions].argsort()
+            ]
             self._num_stored_vertices += 1
         return vertex.flatten()
 
@@ -115,7 +121,7 @@ class NelderMeadMinimizer:
         denominator[denominator == 0] = 1e-5
         return abs((diff / denominator).max()) <= error_tolerance
 
-    def minimize(self, max_iteration=100, error_tolerance=1e-2):
+    def minimize(self, save_freq=1, max_iteration=200, error_tolerance=1e-2):
         for iteration in range(max_iteration):
             pre_coordinate = self._simplex[0, : self._num_dimensions]
             reflect_vertex = self.reflect()
@@ -142,6 +148,8 @@ class NelderMeadMinimizer:
                 else:
                     self.shrink()
             is_unchanged = self.sort()
+            if iteration % save_freq == 0:
+                self.save()
             cur_coordinate = self._simplex[0, : self._num_dimensions]
             if not is_unchanged and self._check_error(
                 pre_coordinate, cur_coordinate, error_tolerance
@@ -149,6 +157,13 @@ class NelderMeadMinimizer:
                 break
         print("Final coordinate:", cur_coordinate)
         print("Total calculation counts: %d" % self._num_stored_vertices)
+
+    def save(self):
+        np.savez(
+            self._file_path,
+            simplex_history=np.stack(self._simplex_history),
+            vertex_history=self._vertex_history,
+        )
 
     @property
     def simplex(self):
@@ -160,11 +175,16 @@ class NelderMeadMinimizer:
 
 
 if __name__ == "__main__":
+    import os
 
     def objective_fun(a, b, c, d):
-        return (a - 1) ** 2 + (b + 1) ** 2 + (c + 10) ** 2 + (d - 5) ** 2
+        return (a - 1) ** 2 + (b + 1) ** 2 + (c + 15) ** 2 + (d - 5) ** 2
 
-    minimizer = NelderMeadMinimizer(objective_fun=objective_fun, num_dimensions=4)
+    cur_dir = os.path.dirname(os.path.abspath(__file__))
+    res_file = os.path.join(cur_dir, "minimizer.npz")
+    minimizer = NelderMeadMinimizer(
+        objective_fun=objective_fun, num_dimensions=4, result_file_path=res_file
+    )
     minimizer.initialize(
         np.array(
             [
@@ -176,4 +196,4 @@ if __name__ == "__main__":
             ]
         )
     )
-    minimizer.minimize()
+    minimizer.minimize(error_tolerance=1e-2)
