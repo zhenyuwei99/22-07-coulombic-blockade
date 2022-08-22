@@ -119,7 +119,7 @@ class NelderMeadMinimizer:
         diff = pre_coordinate - cur_coordinate
         denominator = (pre_coordinate + cur_coordinate) * 0.5
         denominator[denominator == 0] = 1e-5
-        return abs((diff / denominator).max()) <= error_tolerance
+        return abs((diff / denominator)).max() <= error_tolerance
 
     def minimize(self, save_freq=1, max_iteration=200, error_tolerance=1e-2):
         for iteration in range(max_iteration):
@@ -156,6 +156,7 @@ class NelderMeadMinimizer:
             ):
                 break
         print("Final coordinate:", cur_coordinate)
+        print("Final value:", self.generate_vertex(cur_coordinate)[-1])
         print("Total calculation counts: %d" % self._num_stored_vertices)
 
     def save(self):
@@ -164,6 +165,13 @@ class NelderMeadMinimizer:
             simplex_history=np.stack(self._simplex_history),
             vertex_history=self._vertex_history,
         )
+
+    def load(self):
+        data = np.load(self._file_path)
+        self._simplex_history = [i for i in data["simplex_history"]]
+        self._vertex_history = data["vertex_history"]
+        self._num_stored_vertices = self._vertex_history.shape[0]
+        print(self._vertex_history)
 
     @property
     def simplex(self):
