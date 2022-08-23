@@ -538,9 +538,6 @@ class FDPoissonNernstPlanckConstraint(Constraint):
 
     def _get_current_field(self):
         cur_field = [
-            self._grid.field.electric_potential * (~(self._grid.field.channel_shape))
-        ]
-        cur_field += [
             getattr(self._grid.field, "%s_density" % i).copy()
             for i in self._ion_type_list
         ]
@@ -554,7 +551,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         return float((cp.abs(diff / denominator)[20:-20, 20:-20, 20:-20]).max())
 
     def update(
-        self, max_iterations=2500, error_tolerance=1e-2, check_freq=25, image_dir=False,
+        self, max_iterations=2500, error_tolerance=1e-2, check_freq=50, image_dir=False,
     ):
         self._check_bound_state()
         self._update_charge_density()
@@ -587,18 +584,14 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 ]
                 if self._is_verbose:
                     log = "Iteration: %d; " % iteration
-                    log += "PE: %.3e; " % error[0]
                     for i in range(self._num_ion_types):
-                        log += "NPE %s: %.3e; " % (
-                            self._ion_type_list[i],
-                            error[i + 1],
-                        )
+                        log += "NPE %s: %.3e; " % (self._ion_type_list[i], error[i],)
                     log += (
                         "NPE with tolerance: %s"
                         % self._is_nernst_plank_equation_within_tolerance
                     )
                     self._dump_log(log)
-                if np.mean(np.array(error)[1:]) <= error_tolerance:
+                if np.mean(np.array(error)) <= error_tolerance:
                     break
                 pre_list = cur_list
         end_time = datetime.now().replace(microsecond=0)
