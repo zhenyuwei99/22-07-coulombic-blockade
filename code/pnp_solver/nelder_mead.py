@@ -115,13 +115,18 @@ class NelderMeadMinimizer:
         )
         return self.generate_vertex(contract_point)
 
-    def _check_error(self, pre_coordinate, cur_coordinate, error_tolerance):
-        diff = pre_coordinate - cur_coordinate
-        denominator = (pre_coordinate + cur_coordinate) * 0.5
-        denominator[denominator == 0] = 1e-5
-        return abs((diff / denominator)).max() <= error_tolerance
+    def _check_simplex_difference(self, difference_tolerance):
+        value = self._simplex[:, self._num_dimensions]
+        mean = np.mean(value)
+        return np.abs((value - mean) / (mean + 1e-9)).max() <= difference_tolerance
 
-    def minimize(self, save_freq=1, max_iteration=200, error_tolerance=1e-2):
+    def minimize(
+        self,
+        max_iteration=100,
+        unchanged_iterations_tolerance=10,
+        simplex_difference_tolerance=1e-2,
+    ):
+        num_unchanged_iteration = 0
         for iteration in range(max_iteration):
             pre_coordinate = self._simplex[0, : self._num_dimensions]
             reflect_vertex = self.reflect()
@@ -148,15 +153,18 @@ class NelderMeadMinimizer:
                 else:
                     self.shrink()
             is_unchanged = self.sort()
-            if iteration % save_freq == 0:
-                self.save()
-            cur_coordinate = self._simplex[0, : self._num_dimensions]
-            if not is_unchanged and self._check_error(
-                pre_coordinate, cur_coordinate, error_tolerance
+            if is_unchanged:
+                num_unchanged_iteration += 1
+            else:
+                num_unchanged_iteration = 0
+            if num_unchanged_iteration >= unchanged_iterations_tolerance:
+                break
+            if is_unchanged and self._check_simplex_difference(
+                simplex_difference_tolerance
             ):
                 break
-        print("Final coordinate:", cur_coordinate)
-        print("Final value:", self.generate_vertex(cur_coordinate)[-1])
+        print("Final coordinate:", self._simplex[0, : self._num_dimensions])
+        print("Final value:", self._simplex[0, self._num_dimensions])
         print("Total calculation counts: %d" % self._num_stored_vertices)
 
     def save(self):
@@ -185,23 +193,13 @@ class NelderMeadMinimizer:
 if __name__ == "__main__":
     import os
 
-    def objective_fun(a, b, c, d):
-        return (a - 1) ** 2 + (b + 1) ** 2 + (c + 15) ** 2 + (d - 5) ** 2
+    def objective_fun(x, y, z):
+        return np.sin(x) * np.cos(0.2 * y) * np.sin(z)
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     res_file = os.path.join(cur_dir, "minimizer.npz")
     minimizer = NelderMeadMinimizer(
-        objective_fun=objective_fun, num_dimensions=4, result_file_path=res_file
+        objective_fun=objective_fun, num_dimensions=3, result_file_path=res_file
     )
-    minimizer.initialize(
-        np.array(
-            [
-                [2, 2, 3, 1],
-                [3, 2, 1, 3],
-                [-3, -2, -1, 4],
-                [-1, -2, -3, 2],
-                [0, -3, -3, 2],
-            ]
-        )
-    )
-    minimizer.minimize(error_tolerance=1e-2)
+    minimizer.initialize(np.array([[1, 2, 3], [3, 2, 1], [-3, -2, 1], [-1, -2, 2]]))
+    minimizer.minimize()
