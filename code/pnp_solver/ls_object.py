@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 """
-file : objective.py
+file : ls_object.py
 created time : 2022/08/18
 author : Zhenyu Wei
 version : 1.0
@@ -20,7 +20,7 @@ from mdpy.utils import check_quantity_value
 from mdpy.unit import *
 from mdpy.environment import *
 from main import check_dir
-from analyzer import analysis
+from analyzer import PNPAnalyzer
 from fd_pnp_constraint import *
 from sigmoid import *
 from manager import *
@@ -68,7 +68,12 @@ def generate_relative_permittivity_field(
 
 
 def generate_diffusion_field(
-    grid: md.core.Grid, r0: Quantity, l: Quantity, ls: Quantity, diffusion: Quantity, A
+    grid: md.core.Grid,
+    r0: Quantity,
+    l: Quantity,
+    ls: Quantity,
+    diffusion: Quantity,
+    boundary_ratio,
 ):
     # Channel shape
     r0 = check_quantity_value(r0, default_length_unit)
@@ -84,7 +89,7 @@ def generate_diffusion_field(
     diffusion = check_quantity_value(
         diffusion, default_length_unit ** 2 / default_time_unit
     )
-    factor = 0.5 + A
+    factor = 0.5 + boundary_ratio
     return ((factor - channel_shape) * diffusion / factor).astype(CUPY_FLOAT)
 
 
@@ -198,7 +203,7 @@ def job(
                         l=l,
                         ls=ls_pot,
                         diffusion=pot_diffusion,
-                        A=0.1,
+                        boundary_ratio=0.1,
                     ),
                 )
                 grid.add_field(
@@ -217,7 +222,7 @@ def job(
                         l=l,
                         ls=ls_cla,
                         diffusion=cla_diffusion,
-                        A=0.1,
+                        boundary_ratio=0.1,
                     ),
                 )
                 grid.add_field(
@@ -247,43 +252,39 @@ def job(
         raise Exception(error)
 
 
-VOLTAGE_LIST = [-1, -0.8, -0.6, -0.4, -0.2, 0.2, 0.4, 0.6, 0.8, 1.0]
+VOLTAGE_LIST = np.linspace(-1, 1, 21, endpoint=True)
 REFERENCE_CURRENT = np.array(
     [
-        -5.08e-9,
-        -4.14e-9,
-        -2.97e-9,
-        -2.29e-9,
-        -1.28e-9,
-        9.8e-10,
-        1.7e-9,
-        2.5e-9,
-        2.9e-9,
-        3.7e-9,
+        -3.71934e-09,
+        -3.26407e-09,
+        -2.88356e-09,
+        -2.87267e-09,
+        -2.45259e-09,
+        -1.93624e-09,
+        -1.657e-09,
+        -1.2941e-09,
+        -9.81068e-10,
+        -5.17965e-10,
+        4.39e-11,
+        6.56829e-10,
+        1.27573e-09,
+        1.85244e-09,
+        2.29294e-09,
+        2.65312e-09,
+        2.97494e-09,
+        3.66481e-09,
+        4.14477e-09,
+        4.77178e-09,
+        5.07841e-09,
     ]
 )
 
 
-def calculate_error(root_dir, ls_pot, ls_cla):
-    pot_res, cla_res = [], []
-    for voltage in VOLTAGE_LIST:
-        job_name = generate_job_name(ls_pot, ls_cla, voltage)
-        index = 128
-        target_file = os.path.join(root_dir, job_name, "res.grid")
-        grid = md.io.GridParser(target_file).grid
-        pot_res.append(analysis(grid, "pot", 1, index))
-        cla_res.append(analysis(grid, "cla", -1, index))
-    pot_res = (
-        Quantity(pot_res, default_charge_unit / default_time_unit)
-        .convert_to(ampere)
-        .value
-    )
-    cla_res = (
-        Quantity(cla_res, default_charge_unit / default_time_unit)
-        .convert_to(ampere)
-        .value
-    )
-    error = np.abs((pot_res + cla_res - REFERENCE_CURRENT) / REFERENCE_CURRENT).mean()
+def calculate_error(root_dir):
+    analyzer = PNPAnalyzer(root_dir)
+    current_functions = analyzer.analysis()
+    current = np.array([f(VOLTAGE_LIST) for f in current_functions]).sum(0)
+    error = np.abs((current - REFERENCE_CURRENT) / REFERENCE_CURRENT).mean()
     return error
 
 
@@ -315,13 +316,9 @@ if __name__ == "__main__":
             args=(device_file_path, ls_pot, ls_cla, voltage, str_dir, root_dir),
             error_callback=print,
         )
-        sleep(0.25)
+        sleep(0.5)
     pool.close()
     pool.join()
-    error = calculate_error(
-        root_dir,
-        check_quantity_value(ls_pot, default_length_unit),
-        check_quantity_value(ls_cla, default_length_unit),
-    )
+    error = calculate_error(root_dir)
     print("Error: ", error)
 
