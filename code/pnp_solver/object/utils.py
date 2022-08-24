@@ -127,8 +127,8 @@ def visulize_field(grid: md.core.Grid, field: cp.ndarray):
     plt.savefig(os.path.join(cur_dir, "field.png"))
 
 
-VOLTAGE_LIST = np.linspace(-1, 1, 21, endpoint=True)
-REFERENCE_CURRENT = np.array(
+VOLTAGE_LIST = -np.linspace(-1, 1, 21, endpoint=True)
+REFERENCE_CURRENT = -np.array(
     [
         -3.71934e-09,
         -3.26407e-09,
