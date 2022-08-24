@@ -122,6 +122,7 @@ class NelderMeadMinimizer:
 
     def minimize(
         self,
+        save_freq=1,
         max_iteration=100,
         unchanged_iterations_tolerance=10,
         simplex_difference_tolerance=1e-2,
@@ -153,6 +154,8 @@ class NelderMeadMinimizer:
                 else:
                     self.shrink()
             is_unchanged = self.sort()
+            if iteration % save_freq == 0:
+                self.save()
             if is_unchanged:
                 num_unchanged_iteration += 1
             else:
