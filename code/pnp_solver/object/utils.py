@@ -22,6 +22,13 @@ from analyzer import PNPAnalyzer
 from sigmoid import *
 
 
+def generate_job_name(voltage: Quantity):
+    voltage = check_quantity_value(voltage, volt)
+    job_name = "minus-" if voltage < 0 else "plus-"
+    job_name += "%.2fV" % abs(voltage)
+    return job_name
+
+
 def generate_channel_shape(grid: md.core.Grid, r0: Quantity, l: Quantity, lb: Quantity):
     r0 = check_quantity_value(r0, default_length_unit)
     l = check_quantity_value(l, default_length_unit)
