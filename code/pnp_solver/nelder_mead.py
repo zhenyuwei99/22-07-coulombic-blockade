@@ -31,6 +31,7 @@ class NelderMeadMinimizer:
         self._simplex_shape: list = [self._num_vertices, self._data_dimension]
         self._simplex: np.ndarray = np.zeros(self._simplex_shape)
         self._cur_centroid = np.ones(self._num_dimensions)
+        self._log_line = 0
         # Hyper parameters
         self._rho = 1
         self._gamma = 1 + 2 / self._num_dimensions
@@ -69,6 +70,7 @@ class NelderMeadMinimizer:
             )
         self._simplex[:, : self._num_dimensions] = simplex
         for i in range(self._num_vertices):
+            self.log("Initialize vertex %s" % self._simplex[i, : self._num_dimensions])
             self._simplex[i, :] = self.generate_vertex(
                 self._simplex[i, : self._num_dimensions]
             )
@@ -95,30 +97,38 @@ class NelderMeadMinimizer:
             shrink_point = best_point + self._sigma * (
                 self._simplex[i, : self._num_dimensions] - best_point
             )
+            self.log("shrink vertex %s" % shrink_point)
             self._simplex[i, :] = self.generate_vertex(shrink_point)
 
     def reflect(self) -> np.ndarray:
         reflect_point = self._cur_centroid + self._rho * (
             self._cur_centroid - self._simplex[-1, : self._num_dimensions]
         )
+        self.log("reflect vertex %s" % reflect_point)
         return self.generate_vertex(reflect_point)
 
     def expand(self, reflect_point) -> np.ndarray:
         expand_point = self._cur_centroid + self._gamma * (
             reflect_point - self._cur_centroid
         )
+        self.log("expand vertex %s" % expand_point)
         return self.generate_vertex(expand_point)
 
     def contract(self, reflect_point) -> np.ndarray:
         contract_point = self._cur_centroid + self._alpha * (
             reflect_point - self._cur_centroid
         )
+        self.log("contract vertex %s" % contract_point)
         return self.generate_vertex(contract_point)
 
     def _check_simplex_difference(self, difference_tolerance):
         value = self._simplex[:, self._num_dimensions]
         mean = np.mean(value)
         return np.abs((value - mean) / (mean + 1e-9)).max() <= difference_tolerance
+
+    def log(self, text: str):
+        self._log_line += 1
+        print("Operation %d: %s" % (self._log_line, text))
 
     def minimize(
         self,
@@ -129,7 +139,6 @@ class NelderMeadMinimizer:
     ):
         num_unchanged_iteration = 0
         for iteration in range(max_iteration):
-            pre_coordinate = self._simplex[0, : self._num_dimensions]
             reflect_vertex = self.reflect()
             reflect_point = reflect_vertex[: self._num_dimensions]
             reflect_value = reflect_vertex[self._num_dimensions]
@@ -182,7 +191,6 @@ class NelderMeadMinimizer:
         self._simplex_history = [i for i in data["simplex_history"]]
         self._vertex_history = data["vertex_history"]
         self._num_stored_vertices = self._vertex_history.shape[0]
-        print(self._vertex_history)
 
     @property
     def simplex(self):
