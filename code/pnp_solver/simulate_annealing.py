@@ -19,11 +19,13 @@ class SimulateAnnealingMinimizer:
         num_dimensions: int,
         coordinate_range: np.ndarray,
         result_file_path: str,
+        log_file_path: str,
     ) -> None:
         self._objective_fun = objective_fun
         self._num_dimensions = num_dimensions
         self._coordinate_range = coordinate_range
         self._result_file_path = result_file_path
+        self._log_file_path = log_file_path
         if (
             self._coordinate_range.shape[0] != self._num_dimensions
             or self._coordinate_range.shape[1] != 2
@@ -42,6 +44,9 @@ class SimulateAnnealingMinimizer:
         self._num_accepted_points = 0
         self._cur_beta = 0
         self._cur_point = None
+        self._log_line = 0
+        # Other operation
+        open(self._log_file_path, "w").close()
 
     def generate_point(self, coordinate: np.ndarray) -> np.ndarray:
         is_stored = False
@@ -69,12 +74,13 @@ class SimulateAnnealingMinimizer:
             new_coordinate += self._coordinate_range[:, 0]
         else:
             delta = np.random.rand(self._num_dimensions) - 0.5
-            delta *= 1
+            delta *= self._box_diag * 2 / 50
             new_coordinate = self._cur_point[: self._num_dimensions] + delta
             flag = (new_coordinate < self._coordinate_range[:, 0]) | (
                 new_coordinate > self._coordinate_range[:, 1]
             )
             new_coordinate[flag] -= 2 * delta[flag]
+        self.log("random walk to %s" % new_coordinate)
         return self.generate_point(new_coordinate)
 
     def judge(self, delta_energy) -> bool:
@@ -85,10 +91,17 @@ class SimulateAnnealingMinimizer:
             random_flag = np.random.rand(1)[0]
             return True if random_flag <= threshold else False
 
+    def log(self, text: str):
+        with open(self._log_file_path, "a") as f:
+            self._log_line += 1
+            print("Operation %d: %s" % (self._log_line, text), file=f)
+
     def minimize(self, start_beta, end_beta, decreasing_factor):
         unchanged_iterations = 0
         self._cur_beta = start_beta
-        self._cur_point = self.generate_point(np.array([2, 2]))
+        initial_coordinate = self._coordinate_range.mean(axis=1)
+        self.log("Initialize at %s" % initial_coordinate)
+        self._cur_point = self.generate_point(initial_coordinate)
         while self._cur_beta >= end_beta:
             new_point = self.random_walk()
             delta_energy = (
@@ -96,6 +109,7 @@ class SimulateAnnealingMinimizer:
             )
             unchanged_iterations += 1
             if self.judge(delta_energy):
+                self.log("accept point %s" % new_point)
                 self._cur_point = new_point.copy()
                 self._accepted_point_history = np.vstack(
                     [self._accepted_point_history, self._cur_point.reshape([1, -1])]
@@ -141,11 +155,13 @@ if __name__ == "__main__":
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     res_file = os.path.join(cur_dir, "minimizer.npz")
+    log_file = os.path.join(cur_dir, "minimizer.log")
     minimizer = SimulateAnnealingMinimizer(
         objective_fun=objective_fun,
         num_dimensions=2,
         coordinate_range=np.array([[-10, 10], [-10, 10]]),
         result_file_path=res_file,
+        log_file_path=log_file,
     )
     minimizer.minimize(start_beta=1e4, end_beta=1e-4, decreasing_factor=0.95)
 
