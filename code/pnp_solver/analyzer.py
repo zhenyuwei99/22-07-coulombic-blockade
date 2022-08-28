@@ -42,7 +42,9 @@ class PNPAnalyzer:
         ele_list = []
         for target_file in target_files:
             factor = -1 if "minus" in target_file else 1
-            ele_list.append(factor * float(target_file.split("/")[-2].split("-")[2]))
+            ele_list.append(
+                factor * float(target_file.split("/")[-2].split("-")[-1].split("V")[0])
+            )
         ele_list, target_files = [
             list(i) for i in zip(*sorted(zip(ele_list, target_files)))
         ]
@@ -76,7 +78,6 @@ class PNPAnalyzer:
         current_functions = []
         for i in range(self._num_ion_types):
             current_functions.append(self._fit(self._ele, current_res[i]))
-        print(current_functions[0](self.ele))
         return current_functions
 
     def _analysis(
@@ -125,9 +126,10 @@ class PNPAnalyzer:
 
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    root_dir_name = "test"
-    root_dir = os.path.join(cur_dir, "out/" + root_dir_name)
-    img_file_path = os.path.join(cur_dir, root_dir_name + ".png")
+    root_dir_name = "out/ls/pot-73.6219-cla-77.4837"
+    root_dir = os.path.join(cur_dir, root_dir_name)
+    img_file_path = os.path.join(cur_dir, root_dir_name.split("/")[-1] + ".png")
+    print(img_file_path)
     analyzer = PNPAnalyzer(root_dir)
     current_functions = analyzer.analysis()
     ele = np.linspace(-1, 1, 100, endpoint=True)
