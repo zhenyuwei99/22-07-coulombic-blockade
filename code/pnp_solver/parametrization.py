@@ -55,7 +55,7 @@ def ls_objective_fun(args):
         if "Error" in result[i]:
             res = float(result[i].split()[-1])
             dump("get result %.3f" % res, newline=False)
-            if operation % 2 == 0:
+            if operation % 2 == 0 and operation >= 106:
                 post_autodl("object_fun %s get result %.3f" % (args, res))
             return res
     raise KeyError("Failed to catch result")
