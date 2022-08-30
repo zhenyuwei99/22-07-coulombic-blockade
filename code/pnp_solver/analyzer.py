@@ -42,9 +42,9 @@ class PNPAnalyzer:
         ele_list = []
         for target_file in target_files:
             factor = -1 if "minus" in target_file else 1
-        ele_list.append(
-            factor * float(target_file.split("/")[-2].split("-")[-1].split("V")[0])
-        )
+            ele_list.append(
+                factor * float(target_file.split("/")[-2].split("-")[-1].split("V")[0])
+            )
         ele_list, target_files = [
             list(i) for i in zip(*sorted(zip(ele_list, target_files)))
         ]
