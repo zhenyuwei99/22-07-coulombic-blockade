@@ -13,9 +13,7 @@ import os
 import requests
 import numpy as np
 import scipy.optimize as optimize
-from main import check_dir
-from nelder_mead import NelderMeadMinimizer
-from simulate_annealing import SimulateAnnealingMinimizer
+from test_pnp_solver import check_dir
 
 
 def post_autodl(text):
