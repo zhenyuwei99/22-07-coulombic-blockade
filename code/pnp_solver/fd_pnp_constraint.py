@@ -7,15 +7,15 @@ author : Zhenyu Wei
 copyright : (C)Copyright 2021-present, mdpy organization
 """
 
+import os
 import math
 import numpy as np
 import numba as nb
 import numba.cuda as cuda
 import cupy as cp
-import cupyx.scipy.sparse as sparse
-import cupyx.scipy.sparse.linalg as sp_linalg
 import matplotlib
 import matplotlib.pyplot as plt
+from datetime import datetime
 from mdpy import SPATIAL_DIM
 from mdpy.environment import *
 from mdpy.core import Ensemble, Grid
@@ -31,10 +31,11 @@ NP_DENSITY_THRESHOLD = (
     .convert_to(1 / default_length_unit ** 3)
     .value
 )
+SUB_EQUATION_ITERATION = 25
 
 
 class FDPoissonNernstPlanckConstraint(Constraint):
-    def __init__(self, temperature: Quantity, grid: Grid, **ion_information) -> None:
+    def __init__(self, temperature: Quantity, grid: Grid, **ion_type) -> None:
         super().__init__()
         # Temperature
         self._temperature = check_quantity(temperature, kelvin)
@@ -64,10 +65,10 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             }
         )
         # Set ion type
-        self._ion_type_list = list(ion_information.keys())
-        self._ion_valence_list = list(ion_information.values())
+        self._ion_type_list = list(ion_type.keys())
+        self._ion_valence_list = list(ion_type.values())
         self._num_ion_types = len(self._ion_type_list)
-        for key in ion_information.keys():
+        for key in ion_type.keys():
             self._grid.requirement[key + "_density"] = {
                 "require_gradient": False,
                 "require_curvature": False,
@@ -76,7 +77,6 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 "require_gradient": False,
                 "require_curvature": False,
             }
-        # Kernel
         self._bspline_interpretation = cuda.jit(
             nb.void(
                 NUMBA_FLOAT[:, ::1],  # charges
@@ -86,20 +86,33 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 NUMBA_FLOAT[:, :, ::1],  # charge_density
             )
         )(self._bspline_interpretation_kernel)
-        # Attributes
-        self._num_inner_grids = int(np.prod(self._grid.inner_shape))
-        self._coefficient_shape = (self._num_inner_grids, self._num_inner_grids)
-        self._grid_index = (
-            cp.arange(self._num_inner_grids)
-            .reshape(self._grid.inner_shape)
-            .astype(CUPY_INT)
-        )
+        # Flag
+        self._is_nernst_plank_equation_within_tolerance = False
+        self._is_verbose = False
+        self._log_file = None
+        self._is_img = False
+        self._img_dir = None
+
+    def set_log_file(self, file_path: str, mode: str = "w"):
+        self._is_verbose = True
+        self._log_file = file_path
+        open(self._log_file, mode).close()
+
+    def set_img_dir(self, dir_path: str):
+        self._is_img = True
+        self._img_dir = dir_path
+        if not os.path.exists(self._img_dir):
+            os.mkdir(self._img_dir)
+
+    def _dump_log(self, text: str):
+        with open(self._log_file, "a") as f:
+            print(text, file=f)
 
     def __repr__(self) -> str:
         return "<mdpy.constraint.FDPoissonNernstPlanckConstraint object>"
 
     def __str__(self) -> str:
-        return "FD Poisson-Nernst-Planck constraint"
+        return "Finite-difference Poisson-Nernst-Planck constraint"
 
     def bind_ensemble(self, ensemble: Ensemble):
         self._parent_ensemble = ensemble
@@ -193,118 +206,89 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                         charge_density, (grid_x, grid_y, grid_z), charge_xyz
                     )
 
-    def _update_charge_density(self):
-        # Update bspline interpretation
-        thread_per_block = 128
-        block_per_thread = int(
-            np.ceil(self._parent_ensemble.topology.num_particles / thread_per_block)
-        )
-        charge_density = cp.zeros(self._grid.shape, CUPY_FLOAT)
-        self._bspline_interpretation[block_per_thread, thread_per_block](
-            self._parent_ensemble.topology.device_charges,
-            self._parent_ensemble.state.positions
-            + self._parent_ensemble.state.device_half_pbc_diag,
-            self._parent_ensemble.state.device_pbc_matrix,
-            self._grid.device_shape,
-            charge_density,
-        )
-        self._grid.add_field(
-            "charge_density", charge_density / cp.prod(self._grid.device_grid_width)
-        )
-
-    def _join_coefficient(self, data, row, col):
-        # join
-        data = cp.hstack(data)
-        row = cp.hstack(row)
-        col = cp.hstack(col)
-        return sparse.coo_matrix(
-            (data, (row, col)), shape=self._coefficient_shape, dtype=CUPY_FLOAT
-        ).tocsr()
-
     def _generate_poisson_equation_coefficient(self):
-        # Factor
         inv_square = (1 / self._grid.grid_width) ** 2
-        neighbor_factor = cp.zeros(
+        pre_factor = cp.zeros(
             [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
         )
-        self_factor = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
         for i in range(self._grid.num_dimensions):
             for j in range(2):
                 # 0 for plus and 1 for minus
                 target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
-                neighbor_factor[i, j] = (0.5 * inv_square[i]) * (
+                pre_factor[i, j] = (0.5 * inv_square[i]) * (
                     self._grid.field.relative_permittivity[tuple(target_slice)]
                     + self._grid.field.relative_permittivity[1:-1, 1:-1, 1:-1]
                 )
-                self_factor -= neighbor_factor[i, j]
-        # Equation coefficient
-        source_vector = -(
-            self._grid.field.charge_density[1:-1, 1:-1, 1:-1].flatten() * self._k0
-        )
-        # Self (boundary point with Neumann boundary will include the neighbor)
-        data = self_factor.copy()
-        # X Neumann (change coefficient and source)
-        # right
-        data[-1, :, :] += neighbor_factor[0, 0, -1, :, :]
-        source_vector[self._grid_index[-1, :, :].flatten()] += -(
-            self._grid.field.electric_potential[-1, 1:-1, 1:-1]
-            * self._grid.grid_width[0]
-        ).flatten()
-        # left
-        data[0, :, :] += neighbor_factor[0, 1, 0, :, :]
-        source_vector[self._grid_index[0, :, :].flatten()] += (
-            self._grid.field.electric_potential[0, 1:-1, 1:-1]
-            * self._grid.grid_width[0]
-        ).flatten()
-        # Y Neumann (change coefficient and source)
-        # front
-        data[:, -1, :] += neighbor_factor[1, 0, :, -1, :]
-        source_vector[self._grid_index[:, -1, :].flatten()] += -(
-            self._grid.field.electric_potential[1:-1, -1, 1:-1]
-            * self._grid.grid_width[1]
-        ).flatten()
-        # back
-        data[:, 0, :] = neighbor_factor[1, 1, :, 0, :]
-        source_vector[self._grid_index[:, 0, :].flatten()] += (
-            self._grid.field.electric_potential[1:-1, 0, 1:-1]
-            * self._grid.grid_width[1]
-        ).flatten()
-        # Z Dirichlet (change source)
-        # top
-        source_vector[self._grid_index[:, :, -1].flatten()] += -(
-            self._grid.field.electric_potential[1:-1, 1:-1, -1]
-            * neighbor_factor[2, 0, :, :, -1]
-        ).flatten()
-        # bottom
-        source_vector[self._grid_index[:, :, 0].flatten()] += -(
-            self._grid.field.electric_potential[1:-1, 1:-1, 0]
-            * neighbor_factor[2, 1, :, :, 0]
-        ).flatten()
-        coefficient = self._join_coefficient(
-            [data.flatten()], [self._grid_index.flatten()], [self._grid_index.flatten()]
-        )
-        # Neighbor (neighbor of boundary points have been handled)
-        target_slice = [slice(None, None) for i in range(self._grid.num_dimensions)]
-        col_slice = [slice(None, None) for i in range(self._grid.num_dimensions)]
-        data, row, col = [], [], []
-        for i in range(self._grid.num_dimensions):
-            for j in range(2):
-                # 0 for plus and 1 for minus
-                # Target slice stand for the self point and the index in the neighbor factor
-                # when plus, only (0, -1) points are no boundary
-                # when minus, only (1, 0) points are no boundary
-                target_slice[i] = slice(0, -1) if j == 0 else slice(1, None)
-                data.append(neighbor_factor[tuple([i, j] + target_slice)].flatten())
-                row.append(self._grid_index[tuple(target_slice)].flatten())
-                # col slice stand for the real index for the neighbor point
-                col_slice[i] = slice(1, None) if j == 0 else slice(0, -1)
-                col.append(self._grid_index[tuple(col_slice)].flatten())
-                # Refresh
-                target_slice[i] = slice(None, None)
-                col_slice[i] = slice(None, None)
-        coefficient += self._join_coefficient(data, row, col)
-        return coefficient, source_vector
+                inv_denominator += pre_factor[i, j]
+        inv_denominator = CUPY_FLOAT(1) / inv_denominator
+        return pre_factor, inv_denominator
+
+    def _solve_poisson_equation(self, pre_factor, inv_denominator, soa_factor=0.01):
+        # Charge density
+        charge_density = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        for i in range(self._num_ion_types):
+            attribute_name = self._ion_type_list[i] + "_density"
+            charge_density += (
+                self._ion_valence_list[i]
+                * getattr(self._grid.field, attribute_name)[1:-1, 1:-1, 1:-1]
+            )
+        charge_density += self._grid.field.charge_density[1:-1, 1:-1, 1:-1]
+        charge_density *= self._k0
+        # Iteration
+        for iteration in range(SUB_EQUATION_ITERATION):
+            nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+            # X Neumann condition
+            nominator[:-1, :, :] += (
+                pre_factor[0, 0, :-1, :, :]
+                * self._grid.field.electric_potential[2:-1, 1:-1, 1:-1]
+            )
+            nominator[-1, :, :] += pre_factor[0, 0, -1, :, :] * (
+                self._grid.field.electric_potential[-2, 1:-1, 1:-1]
+                + self._grid.field.electric_potential[-1, 1:-1, 1:-1]
+                * self._grid.grid_width[0]
+            )
+            nominator[1:, :, :] += (
+                pre_factor[0, 1, 1:, :, :]
+                * self._grid.field.electric_potential[1:-2, 1:-1, 1:-1]
+            )
+            nominator[0, :, :] += pre_factor[0, 1, 1, :, :] * (
+                self._grid.field.electric_potential[1, 1:-1, 1:-1]
+                - self._grid.field.electric_potential[0, 1:-1, 1:-1]
+                * self._grid.grid_width[0]
+            )
+            # Y Neumann
+            nominator[:, :-1, :] += (
+                pre_factor[1, 0, :, :-1, :]
+                * self._grid.field.electric_potential[1:-1, 2:-1, 1:-1]
+            )
+            nominator[:, -1, :] += pre_factor[1, 0, :, -1, :] * (
+                self._grid.field.electric_potential[1:-1, -2, 1:-1]
+                + self._grid.field.electric_potential[1:-1, -1, 1:-1]
+                * self._grid.grid_width[1]
+            )
+            nominator[:, 1:, :] += (
+                pre_factor[1, 1, :, 1:, :]
+                * self._grid.field.electric_potential[1:-1, 1:-2, 1:-1]
+            )
+            nominator[:, 0, :] += pre_factor[1, 1, :, -1, :] * (
+                self._grid.field.electric_potential[1:-1, 1, 1:-1]
+                - self._grid.field.electric_potential[1:-1, 0, 1:-1]
+                * self._grid.grid_width[1]
+            )
+            # Z Dirichlet
+            nominator += (
+                pre_factor[2, 0] * self._grid.field.electric_potential[1:-1, 1:-1, 2:]
+            )
+            nominator += (
+                pre_factor[2, 1] * self._grid.field.electric_potential[1:-1, 1:-1, :-2]
+            )
+            nominator += charge_density
+            self._grid.field.electric_potential[1:-1, 1:-1, 1:-1] = (
+                soa_factor * self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
+                + (1 - soa_factor) * nominator * inv_denominator
+            )
 
     def _generate_nernst_plank_equation_coefficient(self, ion_type: str):
         inv_square = (1 / self._grid.grid_width) ** 2
@@ -336,35 +320,191 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 target_slice[i] = slice(1, -1)
         return pre_factor
 
-    def _generate_equation_array(self):
-        coefficient, source_vector = self._generate_poisson_equation_coefficient()
-        return coefficient, source_vector
+    def _get_energy_field(self):
+        energy = cp.zeros(
+            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        )
+        ## X Neumann condition
+        energy[0, 0, :-1, :, :] = self._grid.field.electric_potential[2:-1, 1:-1, 1:-1]
+        energy[0, 0, -1, :, :] = (
+            self._grid.field.electric_potential[-2, 1:-1, 1:-1]
+            + self._grid.field.electric_potential[-1, 1:-1, 1:-1]
+            * self._grid.grid_width[0]
+        )
+        energy[0, 1, 1:, :, :] = self._grid.field.electric_potential[1:-2, 1:-1, 1:-1]
+        energy[0, 1, 0, :, :] = (
+            self._grid.field.electric_potential[1, 1:-1, 1:-1]
+            - self._grid.field.electric_potential[0, 1:-1, 1:-1]
+            * self._grid.grid_width[0]
+        )
+        ## Y Neumann
+        energy[1, 0, :, :-1, :] = self._grid.field.electric_potential[1:-1, 2:-1, 1:-1]
+        energy[1, 0, :, -1, :] = (
+            self._grid.field.electric_potential[1:-1, -2, 1:-1]
+            + self._grid.field.electric_potential[1:-1, -1, 1:-1]
+            * self._grid.grid_width[1]
+        )
+        energy[1, 1, :, 1:, :] = self._grid.field.electric_potential[1:-1, 1:-2, 1:-1]
+        energy[1, 1, :, 0, :] = (
+            self._grid.field.electric_potential[1:-1, 1, 1:-1]
+            - self._grid.field.electric_potential[1:-1, 0, 1:-1]
+            * self._grid.grid_width[1]
+        )
+        ## Z Dirichlet
+        energy[2, 0] = self._grid.field.electric_potential[1:-1, 1:-1, 2:]
+        energy[2, 1] = self._grid.field.electric_potential[1:-1, 1:-1, :-2]
+        energy -= self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
+        return energy
 
-    def update(self):
+    def _solve_nernst_plank_equation(
+        self, ion_type: str, energy, pre_factor, soa_factor=0.01,
+    ):
+        # Read input
+        ion_valence = self._ion_valence_list[self._ion_type_list.index(ion_type)]
+        ion_density = getattr(self._grid.field, ion_type + "_density")
+        energy *= self._beta * 0.5 * ion_valence
+        # Denominator
+        energy = CUPY_FLOAT(1) - energy  # 1 - V
+        inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        for i in range(self._grid.num_dimensions):
+            for j in range(2):
+                inv_denominator += pre_factor[i, j] * energy[i, j]
+        # For non-zero denominator, Add a small value for non-pore area
+        threshold = 1e-8
+        inv_denominator += self._grid.field.channel_shape[1:-1, 1:-1, 1:-1] * threshold
+        inv_denominator = CUPY_FLOAT(1) / inv_denominator
+        energy = CUPY_FLOAT(2) - energy  # 1 + V
+        for i in range(self._grid.num_dimensions):
+            for j in range(2):
+                energy[i, j] *= pre_factor[i, j]
+        for iteration in range(SUB_EQUATION_ITERATION):
+            nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+            # X Neumann condition
+            nominator[:-1, :, :] += (
+                energy[0, 0, :-1, :, :] * ion_density[2:-1, 1:-1, 1:-1]
+            )
+            nominator[-1, :, :] += energy[0, 0, -1, :, :] * (
+                ion_density[-2, 1:-1, 1:-1]
+                + ion_density[-1, 1:-1, 1:-1] * self._grid.grid_width[0]
+            )
+            nominator[1:, :, :] += (
+                energy[0, 1, 1:, :, :] * ion_density[1:-2, 1:-1, 1:-1]
+            )
+            nominator[0, :, :] += energy[0, 1, 1, :, :] * (
+                ion_density[1, 1:-1, 1:-1]
+                - ion_density[0, 1:-1, 1:-1] * self._grid.grid_width[0]
+            )
+            # Y Neumann
+            nominator[:, :-1, :] += (
+                energy[1, 0, :, :-1, :] * ion_density[1:-1, 2:-1, 1:-1]
+            )
+            nominator[:, -1, :] += energy[1, 0, :, -1, :] * (
+                ion_density[1:-1, -2, 1:-1]
+                + ion_density[1:-1, -1, 1:-1] * self._grid.grid_width[1]
+            )
+            nominator[:, 1:, :] += (
+                energy[1, 1, :, 1:, :] * ion_density[1:-1, 1:-2, 1:-1]
+            )
+            nominator[:, 0, :] += energy[1, 1, :, -1, :] * (
+                ion_density[1:-1, 1, 1:-1]
+                - ion_density[1:-1, 0, 1:-1] * self._grid.grid_width[1]
+            )
+            # Z Dirichlet
+            nominator += energy[2, 0] * ion_density[1:-1, 1:-1, 2:]
+            nominator += energy[2, 1] * ion_density[1:-1, 1:-1, :-2]
+            new = (
+                soa_factor * ion_density[1:-1, 1:-1, 1:-1]
+                + (1 - soa_factor) * nominator * inv_denominator
+            )
+            # For converge, avoiding extreme large result in the beginning of iteration
+            if not self._is_nernst_plank_equation_within_tolerance:
+                new[new >= NP_DENSITY_THRESHOLD] = NP_DENSITY_THRESHOLD
+                new[new <= -NP_DENSITY_THRESHOLD] = -NP_DENSITY_THRESHOLD
+            ion_density[1:-1, 1:-1, 1:-1] = new
+
+    def _update_charge_density(self):
+        # Update bspline interpretation
+        thread_per_block = 128
+        block_per_thread = int(
+            np.ceil(self._parent_ensemble.topology.num_particles / thread_per_block)
+        )
+        charge_density = cp.zeros(self._grid.shape, CUPY_FLOAT)
+        self._bspline_interpretation[block_per_thread, thread_per_block](
+            self._parent_ensemble.topology.device_charges,
+            self._parent_ensemble.state.positions
+            + self._parent_ensemble.state.device_half_pbc_diag,
+            self._parent_ensemble.state.device_pbc_matrix,
+            self._grid.device_shape,
+            charge_density,
+        )
+        self._grid.add_field(
+            "charge_density", charge_density / cp.prod(self._grid.device_grid_width)
+        )
+
+    def _get_current_field(self):
+        cur_field = [
+            getattr(self._grid.field, "%s_density" % i).copy()
+            for i in self._ion_type_list
+        ]
+        return cur_field
+
+    @staticmethod
+    def _calculate_error(array1: cp.ndarray, array2: cp.ndarray):
+        diff = array1 - array2
+        denominator = 0.5 * (array1 + array2)
+        denominator[denominator == 0] = 1e-9
+        return float((cp.abs(diff / denominator)[20:-20, 20:-20, 20:-20]).max())
+
+    def update(self, max_iterations=5000, error_tolerance=1e-2, check_freq=50):
         self._check_bound_state()
         self._update_charge_density()
         self._grid.check_requirement()
-        coefficient, source_vector = self._generate_equation_array()
-        x, info = sp_linalg.minres(coefficient, source_vector, tol=1e-5)
-
-        x = x.reshape(self._grid.inner_shape)
-
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots(1, 1, figsize=[16, 9])
-        convert = (
-            Quantity(1, default_energy_unit / default_charge_unit)
-            .convert_to(volt)
-            .value
-        )
-        c = ax.contour(
-            self._grid.coordinate.x[1:-1, 33, 1:-1].get(),
-            self._grid.coordinate.z[1:-1, 33, 1:-1].get(),
-            x[:, 64, :].get() * convert,
-            200,
-        )
-        fig.colorbar(c)
-        plt.savefig("test_pe.png")
+        start_time = datetime.now().replace(microsecond=0)
+        self._dump_log("Start at %s" % start_time)
+        pre_factor, inv_denominator = self._generate_poisson_equation_coefficient()
+        pre_factor_list = [
+            self._generate_nernst_plank_equation_coefficient(i)
+            for i in self._ion_type_list
+        ]
+        for iteration in range(max_iterations):
+            self._solve_poisson_equation(pre_factor, inv_denominator)
+            energy = self._get_energy_field()
+            for i in range(self._num_ion_types):
+                self._solve_nernst_plank_equation(
+                    self._ion_type_list[i], energy.copy(), pre_factor_list[i],
+                )
+            if self._is_img and iteration % 200 == 0:
+                visualize_pnp_solution(
+                    self._grid,
+                    os.path.join(self._img_dir, "iteration-%d.png" % iteration),
+                )
+            self._is_nernst_plank_equation_within_tolerance = iteration >= 200
+            if iteration % check_freq == 0:
+                if iteration == 0:
+                    pre_list = self._get_current_field()
+                    continue
+                cur_list = self._get_current_field()
+                error = [
+                    self._calculate_error(i, j) for i, j in zip(cur_list, pre_list)
+                ]
+                if self._is_verbose:
+                    log = "Iteration: %d; " % iteration
+                    for i in range(self._num_ion_types):
+                        log += "NPE %s: %.3e; " % (self._ion_type_list[i], error[i],)
+                    log += (
+                        "NPE with tolerance: %s"
+                        % self._is_nernst_plank_equation_within_tolerance
+                    )
+                    self._dump_log(log)
+                if np.mean(np.array(error)) <= error_tolerance:
+                    break
+                pre_list = cur_list
+        end_time = datetime.now().replace(microsecond=0)
+        if self._is_verbose:
+            self._dump_log(
+                "Finish at %d steps; Total time: %s"
+                % (iteration, end_time - start_time)
+            )
 
     @property
     def grid(self) -> Grid:
