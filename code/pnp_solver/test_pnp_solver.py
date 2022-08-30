@@ -13,7 +13,7 @@ import os
 import shutil
 import mdpy as md
 from fd_pnp_constraint import FDPoissonNernstPlanckConstraint
-from object.utils import *
+from target.utils import *
 
 
 def mkdir(dir_path):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 """
-file : ls_boundary_ratio.py
+file : ls.py
 created time : 2022/08/23
 author : Zhenyu Wei
 version : 1.0
@@ -16,7 +16,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import traceback
 import multiprocessing as mp
 from time import sleep
-from main import check_dir
+from test_pnp_solver import check_dir
 from utils import *
 from fd_pnp_constraint import *
 from manager import *
@@ -26,8 +26,6 @@ def job(
     device_file_path: str,
     ls_pot: Quantity,
     ls_cla: Quantity,
-    boundary_ratio_pot: float,
-    boundary_ratio_cla: float,
     voltage: Quantity,
     str_dir: str,
     root_dir: str,
@@ -92,7 +90,7 @@ def job(
                         l=l,
                         ls=ls_pot,
                         diffusion=pot_diffusion,
-                        boundary_ratio=boundary_ratio_pot,
+                        boundary_ratio=0.02,
                     ),
                 )
                 grid.add_field(
@@ -111,7 +109,7 @@ def job(
                         l=l,
                         ls=ls_cla,
                         diffusion=cla_diffusion,
-                        boundary_ratio=boundary_ratio_cla,
+                        boundary_ratio=0.02,
                     ),
                 )
                 grid.add_field(
@@ -127,9 +125,7 @@ def job(
                 constraint.set_log_file(log_file, "a")
                 constraint.set_img_dir(out_dir)
                 ensemble.add_constraints(constraint)
-                constraint.update(
-                    max_iterations=1500, error_tolerance=1e-2, image_dir=out_dir
-                )
+                constraint.update(max_iterations=5000, error_tolerance=1e-2)
 
                 writer = md.io.GridWriter(grid_file)
                 writer.write(constraint.grid)
@@ -146,16 +142,14 @@ if __name__ == "__main__":
     root_dir = sys.argv[1]
     ls_pot = float(sys.argv[2])
     ls_cla = float(sys.argv[3])
-    boundary_ratio_pot = float(sys.argv[4])
-    boundary_ratio_cla = float(sys.argv[5])
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     str_dir = os.path.join(cur_dir, "../str")
 
-    voltage_list = np.linspace(-1, 1, 12, endpoint=True)  # Manager
-    num_devices = 6
+    num_devices = 4
     num_jobs_per_device = 2
     num_total_jobs = num_devices * num_jobs_per_device
+    voltage_list = np.linspace(-1, 1, num_total_jobs, endpoint=True)  # Manager
     device_file_path = init_device_file(
         file_path=os.path.join(cur_dir, "device.h5"),
         num_devices=num_devices,
@@ -168,16 +162,7 @@ if __name__ == "__main__":
         voltage = Quantity(voltage, volt)
         pool.apply_async(
             job,
-            args=(
-                device_file_path,
-                ls_pot,
-                ls_cla,
-                boundary_ratio_pot,
-                boundary_ratio_cla,
-                voltage,
-                str_dir,
-                root_dir,
-            ),
+            args=(device_file_path, ls_pot, ls_cla, voltage, str_dir, root_dir),
             error_callback=print,
         )
         sleep(0.5)
