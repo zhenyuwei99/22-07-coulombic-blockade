@@ -16,7 +16,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import traceback
 import multiprocessing as mp
 from time import sleep
-from main import check_dir
+from test_pnp_solver import check_dir
 from utils import *
 from fd_pnp_constraint import *
 from manager import *
@@ -125,9 +125,7 @@ def job(
                 constraint.set_log_file(log_file, "a")
                 constraint.set_img_dir(out_dir)
                 ensemble.add_constraints(constraint)
-                constraint.update(
-                    max_iterations=1500, error_tolerance=1e-2, image_dir=out_dir
-                )
+                constraint.update(max_iterations=5000, error_tolerance=1e-2)
 
                 writer = md.io.GridWriter(grid_file)
                 writer.write(constraint.grid)
@@ -148,10 +146,10 @@ if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     str_dir = os.path.join(cur_dir, "../str")
 
-    voltage_list = np.linspace(-1, 1, 12, endpoint=True)  # Manager
-    num_devices = 6
+    num_devices = 4
     num_jobs_per_device = 2
     num_total_jobs = num_devices * num_jobs_per_device
+    voltage_list = np.linspace(-1, 1, num_total_jobs, endpoint=True)  # Manager
     device_file_path = init_device_file(
         file_path=os.path.join(cur_dir, "device.h5"),
         num_devices=num_devices,

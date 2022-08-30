@@ -16,7 +16,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import traceback
 import multiprocessing as mp
 from time import sleep
-from main import check_dir
+from test_pnp_solver import check_dir
 from utils import *
 from fd_pnp_constraint import *
 from manager import *
@@ -127,9 +127,7 @@ def job(
                 constraint.set_log_file(log_file, "a")
                 constraint.set_img_dir(out_dir)
                 ensemble.add_constraints(constraint)
-                constraint.update(
-                    max_iterations=1500, error_tolerance=1e-2, image_dir=out_dir
-                )
+                constraint.update(max_iterations=1500, error_tolerance=1e-2)
 
                 writer = md.io.GridWriter(grid_file)
                 writer.write(constraint.grid)
