@@ -127,7 +127,7 @@ class PNPAnalyzer:
 
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    root_dir_name = "out/ls/pot-73.6219-cla-77.4837"
+    root_dir_name = "out/ls/pot-50.0000-cla-50.0000"
     root_dir = os.path.join(cur_dir, root_dir_name)
     img_file_path = os.path.join(cur_dir, root_dir_name.split("/")[-1] + ".png")
     print(img_file_path)

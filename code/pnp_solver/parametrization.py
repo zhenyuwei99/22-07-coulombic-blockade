@@ -45,7 +45,7 @@ def ls_objective_fun(args):
     root_dir = check_dir(os.path.join(out_dir, "pot-%.4f-cla-%.4f" % (ls_pot, ls_cla)))
     dump("object_fun %s" % args, end=" ", newline=True)
     result = os.popen(
-        "python %s/object/ls.py %s %.4f %.4f" % (cur_dir, root_dir, ls_pot, ls_cla)
+        "python %s/target/ls.py %s %.4f %.4f" % (cur_dir, root_dir, ls_pot, ls_cla)
     )
     result = result.read().split("\n")
     print(result)
@@ -53,7 +53,7 @@ def ls_objective_fun(args):
         if "Error" in result[i]:
             res = float(result[i].split()[-1])
             dump("get result %.3f" % res, newline=False)
-            if operation % 2 == 0 and operation >= 106:
+            if operation % 4 == 0:
                 post_autodl("object_fun %s get result %.3f" % (args, res))
             return res
     raise KeyError("Failed to catch result")
@@ -69,7 +69,7 @@ def ls_boundary_ratio_objective_fun(args):
             % (ls_pot, boundary_ratio_pot, ls_cla, boundary_ratio_cla),
         )
     )
-    command = "python %s/object/ls_boundary_ratio.py %s %.5f %.5f %.5f %.5f" % (
+    command = "python %s/target/ls_boundary_ratio.py %s %.5f %.5f %.5f %.5f" % (
         cur_dir,
         root_dir,
         ls_pot,
@@ -113,13 +113,14 @@ if __name__ == "__main__":
         try:
             operation = 0
             open(log_file, "w").close()
-            optimize.dual_annealing(
+            optimize.minimize(
                 ls_objective_fun,
-                [[0, 100], [0, 100]],
-                maxiter=50,
-                callback=dump,
                 x0=np.array([50, 50]),
-                seed=12345,
+                method="Nelder-Mead",
+                bounds=[[0, 100], [0, 100]],
+                # maxiter=50,
+                callback=dump,
+                # seed=12345,
             )
         except:
             post_autodl("Job failed")
