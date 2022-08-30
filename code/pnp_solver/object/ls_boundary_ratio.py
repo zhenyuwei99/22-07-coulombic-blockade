@@ -22,17 +22,6 @@ from fd_pnp_constraint import *
 from manager import *
 
 
-def generate_job_name(ls_pot: Quantity, ls_cla: Quantity, voltage: Quantity):
-    job_name = "pot-%.2fA-cla-%.2fA" % (
-        check_quantity_value(ls_pot, angstrom),
-        check_quantity_value(ls_cla, angstrom),
-    )
-    voltage = check_quantity_value(voltage, volt)
-    job_name += "-minus-" if voltage < 0 else "-plus-"
-    job_name += "%.2fV" % abs(voltage)
-    return job_name
-
-
 def job(
     device_file_path: str,
     ls_pot: Quantity,
@@ -44,7 +33,7 @@ def job(
     root_dir: str,
 ):
     try:
-        job_name = generate_job_name(ls_pot=ls_pot, ls_cla=ls_cla, voltage=voltage)
+        job_name = generate_job_name(voltage=voltage)
         out_dir = check_dir(os.path.join(root_dir, job_name))
         log_file = os.path.join(out_dir, "log.txt")
         grid_file = os.path.join(out_dir, "res.grid")
@@ -139,7 +128,7 @@ def job(
                 constraint.set_img_dir(out_dir)
                 ensemble.add_constraints(constraint)
                 constraint.update(
-                    max_iterations=1500, error_tolerance=1e-3, image_dir=out_dir
+                    max_iterations=1500, error_tolerance=1e-2, image_dir=out_dir
                 )
 
                 writer = md.io.GridWriter(grid_file)
@@ -164,7 +153,7 @@ if __name__ == "__main__":
     str_dir = os.path.join(cur_dir, "../str")
 
     voltage_list = np.linspace(-1, 1, 12, endpoint=True)  # Manager
-    num_devices = 3
+    num_devices = 6
     num_jobs_per_device = 2
     num_total_jobs = num_devices * num_jobs_per_device
     device_file_path = init_device_file(
