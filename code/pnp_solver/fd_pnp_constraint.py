@@ -26,98 +26,12 @@ from mdpy.error import *
 
 
 BSPLINE_ORDER = 4
-NUM_GRIDS_PER_BLOCK = 8
-DATA_SHAPE = NUM_GRIDS_PER_BLOCK + 2
 NP_DENSITY_THRESHOLD = (
     (Quantity(500, mol / decimeter ** 3) * NA)
     .convert_to(1 / default_length_unit ** 3)
     .value
 )
-
-
-def visualize_pnp_solution(grid, file_path: str):
-    big_font = 20
-    mid_font = 15
-    index = grid.inner_shape[1] // 2
-    fig, ax = plt.subplots(1, 3, figsize=[25, 8])
-    c1 = ax[0].contourf(
-        grid.coordinate.x[1:-1, index, 1:-1].get(),
-        grid.coordinate.z[1:-1, index, 1:-1].get(),
-        Quantity(
-            grid.field.electric_potential[1:-1, index, 1:-1].get(),
-            default_energy_unit / default_charge_unit,
-        )
-        .convert_to(volt)
-        .value,
-        200,
-    )
-    ax[0].set_title("Electric Potential", fontsize=big_font)
-    ax[0].set_xlabel(r"x ($\AA$)", fontsize=big_font)
-    ax[0].set_ylabel(r"z ($\AA$)", fontsize=big_font)
-    ax[0].tick_params(labelsize=mid_font)
-    pot_density = (
-        (
-            Quantity(
-                grid.field.pot_density[1:-1, index, 1:-1].get(),
-                1 / default_length_unit ** 3,
-            )
-            / NA
-        )
-        .convert_to(mol / decimeter ** 3)
-        .value
-    )
-    cla_density = (
-        (
-            Quantity(
-                grid.field.cla_density[1:-1, index, 1:-1].get(),
-                1 / default_length_unit ** 3,
-            )
-            / NA
-        )
-        .convert_to(mol / decimeter ** 3)
-        .value
-    )
-    max1 = float(pot_density.max())
-    max2 = float(cla_density.max())
-    max = max1 if max1 > max2 else max2
-
-    min1 = float(pot_density.min())
-    min2 = float(cla_density.min())
-    min = min1 if min1 < min2 else min2
-    norm = matplotlib.colors.Normalize(vmin=min, vmax=max)
-    c2 = ax[1].contourf(
-        grid.coordinate.x[1:-1, index, 1:-1].get(),
-        grid.coordinate.z[1:-1, index, 1:-1].get(),
-        pot_density,
-        200,
-        norm=norm,
-    )
-    ax[1].set_title("POT density", fontsize=big_font)
-    ax[1].set_xlabel(r"x ($\AA$)", fontsize=big_font)
-    ax[1].tick_params(labelsize=mid_font)
-    c3 = ax[2].contourf(
-        grid.coordinate.x[1:-1, index, 1:-1].get(),
-        grid.coordinate.z[1:-1, index, 1:-1].get(),
-        cla_density,
-        200,
-        norm=norm,
-    )
-    ax[2].set_title("CLA density", fontsize=big_font)
-    ax[2].set_xlabel(r"x ($\AA$)", fontsize=big_font)
-    ax[2].tick_params(labelsize=mid_font)
-    fig.subplots_adjust(left=0.12, right=0.9)
-    position = fig.add_axes([0.05, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
-    cb1 = fig.colorbar(c1, cax=position)
-    cb1.ax.set_title(r"$\phi$ (V)", fontsize=big_font)
-    cb1.ax.tick_params(labelsize=mid_font, labelleft=True, labelright=False)
-
-    position = fig.add_axes([0.93, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
-    cb2 = fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm), cax=position)
-    cb2.ax.set_title("Density (mol/L)", fontsize=big_font)
-    cb2.ax.tick_params(labelsize=mid_font)
-    # fig.tight_layout()
-    plt.savefig(file_path)
-    plt.close()
+SUB_EQUATION_ITERATION = 25
 
 
 class FDPoissonNernstPlanckConstraint(Constraint):
@@ -198,7 +112,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         return "<mdpy.constraint.FDPoissonNernstPlanckConstraint object>"
 
     def __str__(self) -> str:
-        return "FD Poisson-Nernst-Planck constraint"
+        return "Finite-difference Poisson-Nernst-Planck constraint"
 
     def bind_ensemble(self, ensemble: Ensemble):
         self._parent_ensemble = ensemble
@@ -311,9 +225,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         inv_denominator = CUPY_FLOAT(1) / inv_denominator
         return pre_factor, inv_denominator
 
-    def _solve_poisson_equation(
-        self, pre_factor, inv_denominator, max_iterations=200, soa_factor=0.05
-    ):
+    def _solve_poisson_equation(self, pre_factor, inv_denominator, soa_factor=0.01):
         # Charge density
         charge_density = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         for i in range(self._num_ion_types):
@@ -325,7 +237,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         charge_density += self._grid.field.charge_density[1:-1, 1:-1, 1:-1]
         charge_density *= self._k0
         # Iteration
-        for iteration in range(max_iterations):
+        for iteration in range(SUB_EQUATION_ITERATION):
             nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
             # X Neumann condition
             nominator[:-1, :, :] += (
@@ -408,22 +320,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                 target_slice[i] = slice(1, -1)
         return pre_factor
 
-    def _check_nernst_plank_equation_judgement(self):
-        # Only judge once
-        if not self._is_nernst_plank_equation_within_tolerance:
-            is_within_tolerance = True
-            for ion_type in self._ion_type_list:
-                ion_density = getattr(self._grid.field, ion_type + "_density")
-                if cp.count_nonzero(ion_density >= NP_DENSITY_THRESHOLD):
-                    is_within_tolerance = False
-            self._is_nernst_plank_equation_within_tolerance = is_within_tolerance
-
-    def _solve_nernst_plank_equation(
-        self, ion_type: str, pre_factor, max_iterations=200, soa_factor=0.05,
-    ):
-        # Read input
-        ion_valence = self._ion_valence_list[self._ion_type_list.index(ion_type)]
-        ion_density = getattr(self._grid.field, ion_type + "_density")
+    def _get_energy_field(self):
         energy = cp.zeros(
             [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
         )
@@ -457,6 +354,14 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         energy[2, 0] = self._grid.field.electric_potential[1:-1, 1:-1, 2:]
         energy[2, 1] = self._grid.field.electric_potential[1:-1, 1:-1, :-2]
         energy -= self._grid.field.electric_potential[1:-1, 1:-1, 1:-1]
+        return energy
+
+    def _solve_nernst_plank_equation(
+        self, ion_type: str, energy, pre_factor, soa_factor=0.01,
+    ):
+        # Read input
+        ion_valence = self._ion_valence_list[self._ion_type_list.index(ion_type)]
+        ion_density = getattr(self._grid.field, ion_type + "_density")
         energy *= self._beta * 0.5 * ion_valence
         # Denominator
         energy = CUPY_FLOAT(1) - energy  # 1 - V
@@ -472,7 +377,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         for i in range(self._grid.num_dimensions):
             for j in range(2):
                 energy[i, j] *= pre_factor[i, j]
-        for iteration in range(max_iterations):
+        for iteration in range(SUB_EQUATION_ITERATION):
             nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
             # X Neumann condition
             nominator[:-1, :, :] += (
@@ -550,9 +455,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         denominator[denominator == 0] = 1e-9
         return float((cp.abs(diff / denominator)[20:-20, 20:-20, 20:-20]).max())
 
-    def update(
-        self, max_iterations=2500, error_tolerance=1e-2, check_freq=50, image_dir=False,
-    ):
+    def update(self, max_iterations=5000, error_tolerance=1e-2, check_freq=50):
         self._check_bound_state()
         self._update_charge_density()
         self._grid.check_requirement()
@@ -565,15 +468,17 @@ class FDPoissonNernstPlanckConstraint(Constraint):
         ]
         for iteration in range(max_iterations):
             self._solve_poisson_equation(pre_factor, inv_denominator)
+            energy = self._get_energy_field()
             for i in range(self._num_ion_types):
                 self._solve_nernst_plank_equation(
-                    self._ion_type_list[i], pre_factor_list[i],
+                    self._ion_type_list[i], energy.copy(), pre_factor_list[i],
                 )
-            if self._is_img and iteration % 100 == 0:
+            if self._is_img and iteration % 200 == 0:
                 visualize_pnp_solution(
-                    self._grid, os.path.join(image_dir, "iteration-%d.png" % iteration)
+                    self._grid,
+                    os.path.join(self._img_dir, "iteration-%d.png" % iteration),
                 )
-            self._check_nernst_plank_equation_judgement()
+            self._is_nernst_plank_equation_within_tolerance = iteration >= 200
             if iteration % check_freq == 0:
                 if iteration == 0:
                     pre_list = self._get_current_field()
@@ -604,3 +509,88 @@ class FDPoissonNernstPlanckConstraint(Constraint):
     @property
     def grid(self) -> Grid:
         return self._grid
+
+
+def visualize_pnp_solution(grid, file_path: str):
+    big_font = 20
+    mid_font = 15
+    index = grid.inner_shape[1] // 2
+    fig, ax = plt.subplots(1, 3, figsize=[25, 8])
+    c1 = ax[0].contourf(
+        grid.coordinate.x[1:-1, index, 1:-1].get(),
+        grid.coordinate.z[1:-1, index, 1:-1].get(),
+        Quantity(
+            grid.field.electric_potential[1:-1, index, 1:-1].get(),
+            default_energy_unit / default_charge_unit,
+        )
+        .convert_to(volt)
+        .value,
+        200,
+    )
+    ax[0].set_title("Electric Potential", fontsize=big_font)
+    ax[0].set_xlabel(r"x ($\AA$)", fontsize=big_font)
+    ax[0].set_ylabel(r"z ($\AA$)", fontsize=big_font)
+    ax[0].tick_params(labelsize=mid_font)
+    pot_density = (
+        (
+            Quantity(
+                grid.field.pot_density[1:-1, index, 1:-1].get(),
+                1 / default_length_unit ** 3,
+            )
+            / NA
+        )
+        .convert_to(mol / decimeter ** 3)
+        .value
+    )
+    cla_density = (
+        (
+            Quantity(
+                grid.field.cla_density[1:-1, index, 1:-1].get(),
+                1 / default_length_unit ** 3,
+            )
+            / NA
+        )
+        .convert_to(mol / decimeter ** 3)
+        .value
+    )
+    max1 = float(pot_density.max())
+    max2 = float(cla_density.max())
+    max = max1 if max1 > max2 else max2
+
+    min1 = float(pot_density.min())
+    min2 = float(cla_density.min())
+    min = min1 if min1 < min2 else min2
+    norm = matplotlib.colors.Normalize(vmin=min, vmax=max)
+    c2 = ax[1].contourf(
+        grid.coordinate.x[1:-1, index, 1:-1].get(),
+        grid.coordinate.z[1:-1, index, 1:-1].get(),
+        pot_density,
+        200,
+        norm=norm,
+    )
+    ax[1].set_title("POT density", fontsize=big_font)
+    ax[1].set_xlabel(r"x ($\AA$)", fontsize=big_font)
+    ax[1].tick_params(labelsize=mid_font)
+    c3 = ax[2].contourf(
+        grid.coordinate.x[1:-1, index, 1:-1].get(),
+        grid.coordinate.z[1:-1, index, 1:-1].get(),
+        cla_density,
+        200,
+        norm=norm,
+    )
+    ax[2].set_title("CLA density", fontsize=big_font)
+    ax[2].set_xlabel(r"x ($\AA$)", fontsize=big_font)
+    ax[2].tick_params(labelsize=mid_font)
+    fig.subplots_adjust(left=0.12, right=0.9)
+    position = fig.add_axes([0.05, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
+    cb1 = fig.colorbar(c1, cax=position)
+    cb1.ax.set_title(r"$\phi$ (V)", fontsize=big_font)
+    cb1.ax.tick_params(labelsize=mid_font, labelleft=True, labelright=False)
+
+    position = fig.add_axes([0.93, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
+    cb2 = fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm), cax=position)
+    cb2.ax.set_title("Density (mol/L)", fontsize=big_font)
+    cb2.ax.tick_params(labelsize=mid_font)
+    # fig.tight_layout()
+    plt.savefig(file_path)
+    plt.close()

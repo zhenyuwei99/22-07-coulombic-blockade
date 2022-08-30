@@ -42,9 +42,9 @@ class PNPAnalyzer:
         ele_list = []
         for target_file in target_files:
             factor = -1 if "minus" in target_file else 1
-            ele_list.append(
-                factor * float(target_file.split("/")[-2].split("-")[-1].split("V")[0])
-            )
+        ele_list.append(
+            factor * float(target_file.split("/")[-2].split("-")[-1].split("V")[0])
+        )
         ele_list, target_files = [
             list(i) for i in zip(*sorted(zip(ele_list, target_files)))
         ]
@@ -75,6 +75,7 @@ class PNPAnalyzer:
             .convert_to(ampere)
             .value
         )
+        print(current_res)
         current_functions = []
         for i in range(self._num_ion_types):
             current_functions.append(self._fit(self._ele, current_res[i]))
