@@ -12,8 +12,8 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 import os
 import shutil
 import requests
+import json
 import numpy as np
-import mdpy as md
 
 
 def mkdir(dir_path):
@@ -33,27 +33,11 @@ def check_dir(dir_path: str, restart=False):
     return dir_path
 
 
-def post_autodl(text):
-    resp = requests.post(
-        "https://www.autodl.com/api/v1/wechat/message/push",
-        json={
-            "token": "9380a61c5243",
-            "title": "Parameterization",
-            "name": "3080x6",
-            "content": text,
-        },
-    )
-
-
-def dump(*x, end="\n", newline=False):
-    global operation
-    global log_file
-    with open(log_file, "a") as f:
-        if newline:
-            print("Operation %d:" % operation, *x, file=f, end=end)
-            operation += 1
-        else:
-            print(*x, file=f, end=end)
+def post(text, event="workstation_notification"):
+    url = f"https://maker.ifttt.com/trigger/{event}/with/key/cmasrEBOpBk_LuU3CZOQCC"
+    payload = {"value1": text}
+    headers = {"Content-Type": "application/json"}
+    resp = requests.request("POST", url, data=json.dumps(payload), headers=headers)
 
 
 def get_sigmoid_length(alpha):
