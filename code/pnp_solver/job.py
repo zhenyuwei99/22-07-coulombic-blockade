@@ -88,94 +88,91 @@ Argument for PNP solver job:
 
 
 def job(json_file_path):
-    # Parse path
-    print("here")
-
-    root_dir = os.path.dirname(json_file_path)
-    log_file_path = os.path.join(root_dir, "log.txt")
-    grid_file_path = os.path.join(root_dir, "res.grid")
-    job_name = os.path.basename(root_dir)
-    job_dict = read_json(json_file_path)
-    # Read data
-    str_dir = job_dict["str_dir"]
-    str_name = job_dict["str_name"]
-    pdb_file_path = job_dict["pdb_file_path"]
-    psf_file_path = job_dict["psf_file_path"]
-    voltage = job_dict["voltage"]
-    r0 = job_dict["r0"]
-    l0 = job_dict["l0"]
-    w0 = job_dict["w0"]
-    lb = job_dict["lb"]
-    relative_permittivity_ls = job_dict["relative_permittivity_ls"]
-    ion_types = job_dict["ion_types"]
-    ion_density = []
-    ion_ls = []
-    ion_boundary_ratio = []
-    for ion_type in ion_types:
-        ion_density.append(job_dict["%s_density" % ion_type])
-        ion_ls.append(job_dict["%s_ls" % ion_type])
-        ion_boundary_ratio.append(job_dict["%s_boundary_ratio" % ion_type])
-    num_ion_types = job_dict["num_ion_types"]
-    # Create gird
-    grid = md.core.Grid(x=job_dict["x"], y=job_dict["y"], z=job_dict["z"])
-    grid.add_field("channel_shape", generate_channel_shape(grid, r0, l0, lb))
-    grid.add_field(
-        "relative_permittivity",
-        generate_relative_permittivity_field(
-            grid, r0, l0, lb, relative_permittivity_ls
-        ),
-    )
-    grid.add_field(
-        "electric_potential", generate_electric_potential_field(grid, voltage)
-    )
-    for ion_type in ion_types:
-        grid.add_field(
-            "%s_density" % ion_type,
-            generate_density_field(grid, ion_type, ion_types, ion_density),
-        )
-        grid.add_field(
-            "%s_diffusion_coefficient" % ion_type,
-            generate_diffusion_field(
-                grid, r0, l0, ion_type, ion_types, ion_ls, ion_boundary_ratio
-            ),
-        )
-
     # Execution
     try:
-        if not os.path.exists(grid_file_path):
-            device, job = get_available_device(device_file_path)
-            with open(log_file_path, "w") as f:
-                print(
-                    "Submit %s to device-%d-job-%d" % (job_name, device, job), file=f,
-                )
-            with md.device.Device(device):
-                register_device(device_file_path, device, job)
-                # Create ensemble
-                pdb = md.io.PDBParser(pdb_file_path)
-                psf = md.io.PSFParser(psf_file_path)
-                topology = psf.topology
-                positions = pdb.positions
-                ensemble = md.core.Ensemble(
-                    topology, pdb.pbc_matrix, is_use_tile_list=False
-                )
-                ensemble.state.set_positions(positions)
-                # Create constraint
-                ion_dict = {}
-                for ion_type in ion_types:
-                    ion_dict[ion_type] = ION_DICT[ion_type]["valence"]
-                constraint = FDPoissonNernstPlanckConstraint(
-                    Quantity(300, kelvin), grid, **ion_dict
-                )
-                constraint.set_log_file(log_file_path, "a")
-                constraint.set_img_dir(root_dir)
-                ensemble.add_constraints(constraint)
-                constraint.update(max_iterations=5000, error_tolerance=1e-2)
-
-                writer = md.io.GridWriter(grid_file_path)
-                writer.write(constraint.grid)
-            free_device(device_file_path, device, job)
-        else:
+        # Parse path
+        root_dir = os.path.dirname(json_file_path)
+        log_file_path = os.path.join(root_dir, "log.txt")
+        grid_file_path = os.path.join(root_dir, "res.grid")
+        job_name = os.path.basename(root_dir)
+        job_dict = read_json(json_file_path)
+        if os.path.exists(grid_file_path):
             print("Job  exists, skipping current job" % job_name)
+            return None
+        device, job = get_available_device(device_file_path)
+        with open(log_file_path, "w") as f:
+            print(
+                "Submit %s to device-%d-job-%d" % (job_name, device, job), file=f,
+            )
+        with md.device.Device(device):
+            register_device(device_file_path, device, job)
+            # Read data
+            str_dir = job_dict["str_dir"]
+            str_name = job_dict["str_name"]
+            pdb_file_path = job_dict["pdb_file_path"]
+            psf_file_path = job_dict["psf_file_path"]
+            voltage = job_dict["voltage"]
+            r0 = job_dict["r0"]
+            l0 = job_dict["l0"]
+            w0 = job_dict["w0"]
+            lb = job_dict["lb"]
+            relative_permittivity_ls = job_dict["relative_permittivity_ls"]
+            ion_types = job_dict["ion_types"]
+            ion_density = []
+            ion_ls = []
+            ion_boundary_ratio = []
+            for ion_type in ion_types:
+                ion_density.append(job_dict["%s_density" % ion_type])
+                ion_ls.append(job_dict["%s_ls" % ion_type])
+                ion_boundary_ratio.append(job_dict["%s_boundary_ratio" % ion_type])
+            num_ion_types = job_dict["num_ion_types"]
+            # Create gird
+            grid = md.core.Grid(x=job_dict["x"], y=job_dict["y"], z=job_dict["z"])
+            grid.add_field("channel_shape", generate_channel_shape(grid, r0, l0, lb))
+            grid.add_field(
+                "relative_permittivity",
+                generate_relative_permittivity_field(
+                    grid, r0, l0, lb, relative_permittivity_ls
+                ),
+            )
+            grid.add_field(
+                "electric_potential", generate_electric_potential_field(grid, voltage),
+            )
+            for ion_type in ion_types:
+                grid.add_field(
+                    "%s_density" % ion_type,
+                    generate_density_field(grid, ion_type, ion_types, ion_density),
+                )
+                grid.add_field(
+                    "%s_diffusion_coefficient" % ion_type,
+                    generate_diffusion_field(
+                        grid, r0, l0, ion_type, ion_types, ion_ls, ion_boundary_ratio,
+                    ),
+                )
+            # Create ensemble
+            pdb = md.io.PDBParser(pdb_file_path)
+            psf = md.io.PSFParser(psf_file_path)
+            topology = psf.topology
+            positions = pdb.positions
+            ensemble = md.core.Ensemble(
+                topology, pdb.pbc_matrix, is_use_tile_list=False
+            )
+            ensemble.state.set_positions(positions)
+            # Create constraint
+            ion_dict = {}
+            for ion_type in ion_types:
+                ion_dict[ion_type] = ION_DICT[ion_type]["valence"]
+            constraint = FDPoissonNernstPlanckConstraint(
+                Quantity(300, kelvin), grid, **ion_dict
+            )
+            constraint.set_log_file(log_file_path, "a")
+            constraint.set_img_dir(root_dir)
+            ensemble.add_constraints(constraint)
+            constraint.update(max_iterations=5000, error_tolerance=1e-2)
+            # Output
+            writer = md.io.GridWriter(grid_file_path)
+            writer.write(constraint.grid)
+        free_device(device_file_path, device, job)
     except:
         error = traceback.format_exc()
         raise Exception(error)
