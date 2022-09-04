@@ -1,9 +1,8 @@
 # template tcl for building a solvated sio2 nanopore
 # Argument:
+# - name: name of file preffix
 # - box_size: number of lattices in 3 direction
 # - pore_radius: radius of nanopores
-# - solvation_box_height: Half height of solvation box
-# - ion_concentation: concentation of ions
 
 package require inorganicbuilder
 package require solvate
@@ -20,15 +19,13 @@ puts $new_center_prot
 }
 
 # Parameters
-set box_size {20 20 35}; # # of lattice
-set pore_radius 20; # Angstrom
+set name %s
+set box_size {%d %d %d}; # # of lattice
+set pore_radius %.5f; # Angstrom
 set pore_angle 10.0
 
 # File name
-set sio2_file_name sio2
-set sio2_pore_file_name sio2_pore
-set sio2_solvated_file_name sio2_solvated
-set sio2_ionized_file_name sio2_ionized
+set sio2_file_name $name
 set final_file_name str
 
 # SiO2 inorganicBuilder
@@ -64,10 +61,10 @@ resetpsf
 readpsf $psf
 coordpdb $pdb
 foreach atom $pore_atoms { delatom [lindex $atom 0] [lindex $atom 1] [lindex $atom 2] }
-writepsf $sio2_pore_file_name.psf
-writepdb $sio2_pore_file_name.pdb
+writepsf $sio2_file_name.psf
+writepdb $sio2_file_name.pdb
 
-mol load psf $sio2_pore_file_name.psf pdb $sio2_pore_file_name.pdb
+mol load psf $sio2_file_name.psf pdb $sio2_file_name.pdb
 
 ## Change O to OSI
 set oxygen [atomselect top "type O"]
@@ -78,7 +75,7 @@ set silicon [atomselect top "type SI"]
 $silicon set mass 28.0855
 $silicon set charge 0.9
 set all [atomselect top all]
-$all writepsf $sio2_pore_file_name.psf
-$all writepdb $sio2_pore_file_name.pdb
+$all writepsf $sio2_file_name.psf
+$all writepdb $sio2_file_name.pdb
 
 exit
