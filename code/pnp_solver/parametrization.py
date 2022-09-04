@@ -11,10 +11,7 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 
 import os
 import json
-import time
-import requests
 import numpy as np
-import multiprocessing as mp
 import scipy.optimize as optimize
 from mdpy.unit import *
 from mdpy.utils import *
@@ -22,29 +19,7 @@ from test_pnp_solver import check_dir
 from job import STR_NAME, generate_json
 from analyzer import PNPAnalyzer
 from manager import *
-
-
-def post_autodl(text):
-    resp = requests.post(
-        "https://www.autodl.com/api/v1/wechat/message/push",
-        json={
-            "token": "9380a61c5243",
-            "title": "Parameterization",
-            "name": "3080x6",
-            "content": text,
-        },
-    )
-
-
-def dump(*x, end="\n", newline=False):
-    global operation
-    global log_file
-    with open(log_file, "a") as f:
-        if newline:
-            print("Operation %d:" % operation, *x, file=f, end=end)
-            operation += 1
-        else:
-            print(*x, file=f, end=end)
+from utils import *
 
 
 class ObjectFunction:

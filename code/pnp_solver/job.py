@@ -22,8 +22,8 @@ from mdpy.unit import *
 from mdpy.utils import *
 from mdpy.environment import *
 from fd_pnp_constraint import FDPoissonNernstPlanckConstraint
-from sigmoid import *
 from manager import *
+from utils import *
 
 CUR_DIR = cur_dir = os.path.dirname(os.path.abspath(__file__))
 STR_DIR = os.path.join(CUR_DIR, "str")
