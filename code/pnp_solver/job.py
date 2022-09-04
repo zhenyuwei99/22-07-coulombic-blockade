@@ -12,6 +12,7 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 import os
 import sys
 import json
+import time
 import traceback
 import mdpy as md
 import cupy as cp
@@ -86,141 +87,72 @@ Argument for PNP solver job:
 """
 
 
-class Job:
-    def __init__(self, json_file_path: str) -> None:
-        # Parse path
-        self._root_dir = os.path.dirname(json_file_path)
-        self._log_file = os.path.join(self._root_dir, "log.txt")
-        self._grid_file = os.path.join(self._root_dir, "res.grid")
-        self._job_name = os.path.basename(self._root_dir)
-        job_dict = read_json(json_file_path)
-        # Read data
-        self._str_dir = job_dict["str_dir"]
-        self._str_name = job_dict["str_name"]
-        self._pdb_file = job_dict["pdb_file"]
-        self._psf_file = job_dict["psf_file"]
-        self._voltage = job_dict["voltage"]
-        self._r0 = job_dict["r0"]
-        self._l0 = job_dict["l0"]
-        self._w0 = job_dict["w0"]
-        self._lb = job_dict["lb"]
-        self._relative_permittivity_ls = job_dict["relative_permittivity_ls"]
-        self._ion_types = job_dict["ion_types"]
-        self._ion_density = []
-        self._ion_ls = []
-        self._ion_boundary_ratio = []
-        for ion_type in self._ion_types:
-            self._ion_density.append(job_dict["%s_density" % ion_type])
-            self._ion_ls.append(job_dict["%s_ls" % ion_type])
-            self._ion_boundary_ratio.append(job_dict["%s_boundary_ratio" % ion_type])
-        self._num_ion_types = job_dict["num_ion_types"]
-        # Create gird
-        self._grid = md.core.Grid(x=job_dict["x"], y=job_dict["y"], z=job_dict["z"])
-        self._grid.add_field("channel_shape", self._generate_channel_shape())
-        self._grid.add_field(
-            "relative_permittivity", self._generate_relative_permittivity_field()
+def job(json_file_path):
+    # Parse path
+    print("here")
+
+    root_dir = os.path.dirname(json_file_path)
+    log_file_path = os.path.join(root_dir, "log.txt")
+    grid_file_path = os.path.join(root_dir, "res.grid")
+    job_name = os.path.basename(root_dir)
+    job_dict = read_json(json_file_path)
+    # Read data
+    str_dir = job_dict["str_dir"]
+    str_name = job_dict["str_name"]
+    pdb_file_path = job_dict["pdb_file_path"]
+    psf_file_path = job_dict["psf_file_path"]
+    voltage = job_dict["voltage"]
+    r0 = job_dict["r0"]
+    l0 = job_dict["l0"]
+    w0 = job_dict["w0"]
+    lb = job_dict["lb"]
+    relative_permittivity_ls = job_dict["relative_permittivity_ls"]
+    ion_types = job_dict["ion_types"]
+    ion_density = []
+    ion_ls = []
+    ion_boundary_ratio = []
+    for ion_type in ion_types:
+        ion_density.append(job_dict["%s_density" % ion_type])
+        ion_ls.append(job_dict["%s_ls" % ion_type])
+        ion_boundary_ratio.append(job_dict["%s_boundary_ratio" % ion_type])
+    num_ion_types = job_dict["num_ion_types"]
+    # Create gird
+    grid = md.core.Grid(x=job_dict["x"], y=job_dict["y"], z=job_dict["z"])
+    grid.add_field("channel_shape", generate_channel_shape(grid, r0, l0, lb))
+    grid.add_field(
+        "relative_permittivity",
+        generate_relative_permittivity_field(
+            grid, r0, l0, lb, relative_permittivity_ls
+        ),
+    )
+    grid.add_field(
+        "electric_potential", generate_electric_potential_field(grid, voltage)
+    )
+    for ion_type in ion_types:
+        grid.add_field(
+            "%s_density" % ion_type,
+            generate_density_field(grid, ion_type, ion_types, ion_density),
         )
-        self._grid.add_field(
-            "electric_potential", self._generate_electric_potential_field()
-        )
-        for ion_type in self._ion_types:
-            self._grid.add_field(
-                "%s_density" % ion_type, self._generate_density_field(ion_type)
-            )
-            self._grid.add_field(
-                "%s_diffusion_coefficient" % ion_type,
-                self._generate_diffusion_field(ion_type),
-            )
-
-    def _generate_channel_shape(self):
-        r0 = self._r0 - self._lb
-        l0 = self._l0 / 2 + self._lb
-        r = cp.sqrt(self._grid.coordinate.x ** 2 + self._grid.coordinate.y ** 2)
-        channel_shape = CUPY_FLOAT(1) / (
-            (1 + cp.exp(-(r - r0)))
-            * (1 + cp.exp((cp.abs(self._grid.coordinate.z) - l0)))
-        )  # 1 for pore 0 for solvation
-        channel_shape = channel_shape >= 0.5
-        return channel_shape.astype(cp.bool8)
-
-    def _generate_relative_permittivity_field(self):
-        r0 = self._r0 - self._lb
-        l0 = self._l0 / 2 + self._lb
-        alpha = reasoning_alpha(self._relative_permittivity_ls)
-        r = cp.sqrt(self._grid.coordinate.x ** 2 + self._grid.coordinate.y ** 2)
-        channel_shape = CUPY_FLOAT(1) / (
-            (1 + cp.exp(-alpha * (r - r0)))
-            * (1 + cp.exp(alpha * (cp.abs(self._grid.coordinate.z) - l0)))
-        )  # 1 for pore 0 for solvation
-        relative_permittivity = (1 - channel_shape) * (
-            SOLUTION_PERMITTIVITY - CAVITY_PERMITTIVITY
-        ) + CAVITY_PERMITTIVITY
-        return relative_permittivity.astype(CUPY_FLOAT)
-
-    def _generate_diffusion_field(self, ion_type: str):
-        ion_index = self._ion_types.index(ion_type)
-        alpha = reasoning_alpha(self._ion_ls[ion_index])
-        r = cp.sqrt(self._grid.coordinate.x ** 2 + self._grid.coordinate.y ** 2)
-        channel_shape = CUPY_FLOAT(1) / (
-            (1 + cp.exp(-alpha * (r - self._r0)))
-            * (1 + cp.exp(alpha * (cp.abs(self._grid.coordinate.z) - self._l0 / 2)))
-        )  # 1 for pore 0 for solvation
-        diffusion = (
-            ION_DICT[ion_type]["diffusion"]
-            .convert_to(default_length_unit ** 2 / default_time_unit)
-            .value
-        )
-        factor = 0.5 + self._ion_boundary_ratio[ion_index]
-        return ((factor - channel_shape) * diffusion / factor).astype(CUPY_FLOAT)
-
-    def _generate_density_field(self, ion_type: str):
-        ion_index = self._ion_types.index(ion_type)
-        density_field = self._grid.zeros_field()
-        density_field[:, :, [0, -1]] = self._ion_density[ion_index]
-        return density_field.astype(CUPY_FLOAT)
-
-    def _generate_electric_potential_field(self):
-        electric_potential_field = self._grid.zeros_field()
-        electric_potential_field[:, :, 0] = self._voltage
-        return electric_potential_field.astype(CUPY_FLOAT)
-
-    def generate_args(self, device_file):
-        return (
-            self._ion_types,
-            self._grid,
-            self._job_name,
-            self._root_dir,
-            device_file,
-            self._grid_file,
-            self._log_file,
-            self._pdb_file,
-            self._psf_file,
+        grid.add_field(
+            "%s_diffusion_coefficient" % ion_type,
+            generate_diffusion_field(
+                grid, r0, l0, ion_type, ion_types, ion_ls, ion_boundary_ratio
+            ),
         )
 
-
-def execute(
-    ion_types,
-    grid,
-    job_name,
-    root_dir,
-    device_file,
-    grid_file,
-    log_file,
-    pdb_file,
-    psf_file,
-):
+    # Execution
     try:
-        if not os.path.exists(grid_file):
-            device, job = get_available_device(device_file)
-            with open(log_file, "w") as f:
+        if not os.path.exists(grid_file_path):
+            device, job = get_available_device(device_file_path)
+            with open(log_file_path, "w") as f:
                 print(
                     "Submit %s to device-%d-job-%d" % (job_name, device, job), file=f,
                 )
             with md.device.Device(device):
-                register_device(device_file, device, job)
+                register_device(device_file_path, device, job)
                 # Create ensemble
-                pdb = md.io.PDBParser(pdb_file)
-                psf = md.io.PSFParser(psf_file)
+                pdb = md.io.PDBParser(pdb_file_path)
+                psf = md.io.PSFParser(psf_file_path)
                 topology = psf.topology
                 positions = pdb.positions
                 ensemble = md.core.Ensemble(
@@ -234,19 +166,77 @@ def execute(
                 constraint = FDPoissonNernstPlanckConstraint(
                     Quantity(300, kelvin), grid, **ion_dict
                 )
-                constraint.set_log_file(log_file, "a")
+                constraint.set_log_file(log_file_path, "a")
                 constraint.set_img_dir(root_dir)
                 ensemble.add_constraints(constraint)
                 constraint.update(max_iterations=5000, error_tolerance=1e-2)
 
-                writer = md.io.GridWriter(grid_file)
+                writer = md.io.GridWriter(grid_file_path)
                 writer.write(constraint.grid)
-            free_device(device_file, device, job)
+            free_device(device_file_path, device, job)
         else:
             print("Job  exists, skipping current job" % job_name)
     except:
         error = traceback.format_exc()
         raise Exception(error)
+
+
+def generate_channel_shape(grid, r0, l0, lb):
+    r0 = r0 - lb
+    l0 = l0 / 2 + lb
+    r = cp.sqrt(grid.coordinate.x ** 2 + grid.coordinate.y ** 2)
+    channel_shape = CUPY_FLOAT(1) / (
+        (1 + cp.exp(-(r - r0))) * (1 + cp.exp((cp.abs(grid.coordinate.z) - l0)))
+    )  # 1 for pore 0 for solvation
+    channel_shape = channel_shape >= 0.5
+    return channel_shape.astype(cp.bool8)
+
+
+def generate_relative_permittivity_field(grid, r0, l0, lb, relative_permittivity_ls):
+    r0 = r0 - lb
+    l0 = l0 / 2 + lb
+    alpha = reasoning_alpha(relative_permittivity_ls)
+    r = cp.sqrt(grid.coordinate.x ** 2 + grid.coordinate.y ** 2)
+    channel_shape = CUPY_FLOAT(1) / (
+        (1 + cp.exp(-alpha * (r - r0)))
+        * (1 + cp.exp(alpha * (cp.abs(grid.coordinate.z) - l0)))
+    )  # 1 for pore 0 for solvation
+    relative_permittivity = (1 - channel_shape) * (
+        SOLUTION_PERMITTIVITY - CAVITY_PERMITTIVITY
+    ) + CAVITY_PERMITTIVITY
+    return relative_permittivity.astype(CUPY_FLOAT)
+
+
+def generate_diffusion_field(
+    grid, r0, l0, ion_type, ion_types, ion_ls, ion_boundary_ratio
+):
+    ion_index = ion_types.index(ion_type)
+    alpha = reasoning_alpha(ion_ls[ion_index])
+    r = cp.sqrt(grid.coordinate.x ** 2 + grid.coordinate.y ** 2)
+    channel_shape = CUPY_FLOAT(1) / (
+        (1 + cp.exp(-alpha * (r - r0)))
+        * (1 + cp.exp(alpha * (cp.abs(grid.coordinate.z) - l0 / 2)))
+    )  # 1 for pore 0 for solvation
+    diffusion = (
+        ION_DICT[ion_type]["diffusion"]
+        .convert_to(default_length_unit ** 2 / default_time_unit)
+        .value
+    )
+    factor = 0.5 + ion_boundary_ratio[ion_index]
+    return ((factor - channel_shape) * diffusion / factor).astype(CUPY_FLOAT)
+
+
+def generate_density_field(grid, ion_type, ion_types, ion_density):
+    ion_index = ion_types.index(ion_type)
+    density_field = grid.zeros_field()
+    density_field[:, :, [0, -1]] = ion_density[ion_index]
+    return density_field.astype(CUPY_FLOAT)
+
+
+def generate_electric_potential_field(grid, voltage):
+    electric_potential_field = grid.zeros_field()
+    electric_potential_field[:, :, 0] = voltage
+    return electric_potential_field.astype(CUPY_FLOAT)
 
 
 def check_structure(str_dir, r0, l0, w0):
@@ -263,23 +253,23 @@ def check_structure(str_dir, r0, l0, w0):
     z_length = l0 + Z_PADDING_LENGTH
     # Generate file
     str_name = STR_NAME % (r0, l0, w0)
-    pdb_file = os.path.join(str_dir, str_name + ".pdb")
-    psf_file = os.path.join(str_dir, str_name + ".psf")
-    tcl_file = os.path.join(str_dir, str_name + ".tcl")
-    if os.path.exists(pdb_file) and os.path.exists(psf_file):
+    pdb_file_path = os.path.join(str_dir, str_name + ".pdb")
+    psf_file_path = os.path.join(str_dir, str_name + ".psf")
+    tcl_file_path = os.path.join(str_dir, str_name + ".tcl")
+    if os.path.exists(pdb_file_path) and os.path.exists(psf_file_path):
         return r0, l0, w0, z_length
     with open(os.path.join(str_dir, TCL_TEMPLATE_NAME), "r") as f:
         tcl_command = f.read() % (str_name, grid_x, grid_y, grid_z, r0)
-    with open(tcl_file, "w") as f:
+    with open(tcl_file_path, "w") as f:
         print(tcl_command, file=f)
-    os.system("cd %s && vmd -dispdev text -e %s" % (str_dir, tcl_file))
+    os.system("cd %s && vmd -dispdev text -e %s" % (str_dir, tcl_file_path))
     # Set pbc
-    with open(pdb_file, "r") as f:
+    with open(pdb_file_path, "r") as f:
         pdb_data = f.readlines()
         pdb_data[0] = CRYST1 % (w0, w0, z_length, 90, 90, 90)
-    with open(pdb_file, "w") as f:
+    with open(pdb_file_path, "w") as f:
         f.writelines(pdb_data)
-    os.remove(tcl_file)
+    os.remove(tcl_file_path)
     return r0, l0, w0, z_length
 
 
@@ -361,13 +351,14 @@ def generate_json(
     ]
     # Structure attribute
     job_dict["str_name"] = STR_NAME % (job_dict["r0"], job_dict["l0"], job_dict["w0"])
-    job_dict["pdb_file"] = os.path.join(str_dir, job_dict["str_name"] + ".pdb")
-    job_dict["psf_file"] = os.path.join(str_dir, job_dict["str_name"] + ".psf")
+    job_dict["pdb_file_path"] = os.path.join(str_dir, job_dict["str_name"] + ".pdb")
+    job_dict["psf_file_path"] = os.path.join(str_dir, job_dict["str_name"] + ".psf")
     # Output
     with open(json_file_path, "w") as f:
         data = json.dumps(job_dict, sort_keys=True, indent=2)
         data = data.encode("utf-8").decode("unicode_escape")
         print(data, file=f)
+    return json_file_path
 
 
 def read_json(json_file_path: str) -> dict:
@@ -377,28 +368,13 @@ def read_json(json_file_path: str) -> dict:
 
 
 if __name__ == "__main__":
-    generate_json(
-        os.path.join(CUR_DIR, "test.json"),
-        r0=Quantity(10, angstrom),
-        l0=Quantity(100, angstrom),
-        w0=Quantity(50, angstrom),
-        voltage=Quantity(1, volt),
-        grid_width=Quantity(0.5, angstrom),
-        sod_density=Quantity(1, mol / decimeter ** 3),
-        pot_density=Quantity(1, mol / decimeter ** 3),
-        cla_density=Quantity(1, mol / decimeter ** 3),
-        sod_ls=12,
-    )
-    num_devices = 3
-    num_jobs_per_device = 2
-    device_file = os.path.join(CUR_DIR, "device.h5")
-    init_device_file(device_file, num_devices, num_jobs_per_device)
-    pool_size = num_devices * num_jobs_per_device
-    pool = mp.Pool(pool_size)
-    num_jobs = len(sys.argv) - 1
-    for i in range(num_jobs):
-        json_file_path = sys.argv[i + 1]
-        job = Job(json_file_path)
-        pool.apply_async(execute, args=job.generate_args(device_file))
+    device_file_path = sys.argv[1]
+    num_devices = int(sys.argv[2])
+    num_jobs_per_device = int(sys.argv[3])
+    pool = mp.Pool(num_devices * num_jobs_per_device)
+    for json_file_path in sys.argv[4:]:
+        print(json_file_path)
+        pool.apply_async(job, args=(json_file_path,), callback=print)
+        time.sleep(0.5)
     pool.close()
     pool.join()
