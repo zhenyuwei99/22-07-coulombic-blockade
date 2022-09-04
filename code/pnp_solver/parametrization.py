@@ -21,6 +21,17 @@ from manager import *
 from utils import *
 
 
+def dump(*x, end="\n", newline=False):
+    global operation
+    global log_file
+    with open(log_file, "a") as f:
+        if newline:
+            print("Operation %d:" % operation, *x, file=f, end=end)
+            operation += 1
+        else:
+            print(*x, file=f, end=end)
+
+
 class ObjectFunction:
     def __init__(
         self,
@@ -156,8 +167,8 @@ class ObjectFunction:
             error.append((current_pred - current_ref) ** 2)
         error = np.hstack(error).mean()
         dump("get result %.5e" % error, newline=False)
-        if operation % 4 == 0:
-            post_autodl("object_fun %s get result %.3f" % (args, error))
+        post("object_fun %s get result %.5e" % (args, error))
+        return error
 
 
 if __name__ == "__main__":
@@ -184,5 +195,5 @@ if __name__ == "__main__":
             seed=12345,
         )
     except:
-        post_autodl("Job failed")
+        post("Job failed")
 
