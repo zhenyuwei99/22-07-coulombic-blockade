@@ -23,7 +23,7 @@ from job import ION_DICT
 class PNPAnalyzer:
     def __init__(self, root_dir: str) -> None:
         self._root_dir = root_dir
-        self._ele, self._target_files = self._get_root_dir_information()
+        self._voltage, self._target_files = self._get_root_dir_information()
         (
             self._ion_types,
             self._ion_valences,
@@ -37,19 +37,17 @@ class PNPAnalyzer:
             for i in os.listdir(self._root_dir)
             if os.path.exists(os.path.join(self._root_dir, i, "res.grid"))
         ]
-        ele_list = [
+        voltage_list = [
             float(os.path.dirname(target_file).split("/")[-1].split("V")[0])
             for target_file in target_files
         ]
-        # for target_file in target_files:
-        #     factor = -1 if "minus" in target_file else 1
-        #     ele_list.append(
-        #         factor * float(target_file.split("/")[-2].split("-")[-1].split("V")[0])
-        #     )
-        ele_list, target_files = [
-            list(i) for i in zip(*sorted(zip(ele_list, target_files)))
+        voltage_list, target_files = [
+            list(i) for i in zip(*sorted(zip(voltage_list, target_files)))
         ]
-        return np.array(ele_list), target_files
+        return (
+            Quantity(voltage_list, volt).convert_to(default_voltage_unit).value,
+            target_files,
+        )
 
     def _get_grid_information(self):
         grid = md.io.GridParser(self._target_files[0]).grid
@@ -71,15 +69,9 @@ class PNPAnalyzer:
                     )
                 )
             print("Finish %s" % target_file.split("/")[-2])
-        current_res = (
-            Quantity(current_res, default_charge_unit / default_time_unit)
-            .convert_to(ampere)
-            .value
-        )
-        print(current_res)
         current_functions = []
         for i in range(self._num_ion_types):
-            current_functions.append(self._fit(self._ele, current_res[i]))
+            current_functions.append(self._fit(self._voltage, current_res[i]))
         return current_functions
 
     def _analysis(
@@ -118,12 +110,12 @@ class PNPAnalyzer:
         )
         return current
 
-    def _fit(self, ele, current):
-        return interpolate.interp1d(ele, current, "cubic", fill_value="extrapolate")
+    def _fit(self, voltage, current):
+        return interpolate.interp1d(voltage, current, "cubic", fill_value="extrapolate")
 
     @property
-    def ele(self):
-        return self._ele
+    def voltage(self):
+        return self._voltage
 
 
 if __name__ == "__main__":
@@ -135,22 +127,22 @@ if __name__ == "__main__":
     print(img_file_path)
     analyzer = PNPAnalyzer(root_dir)
     current_functions = analyzer.analysis()
-    ele = np.linspace(-1, 1, 100, endpoint=True)
-    current = np.array([f(ele) for f in current_functions]).sum(0)
+    voltage = np.linspace(-1, 1, 100, endpoint=True)
+    current = np.array([f(voltage) for f in current_functions]).sum(0)
     fig, ax = plt.subplots(1, 1, figsize=[20, 8])
     font_big, font_mid = 20, 15
     ax.plot(
-        ele, current, label="PNP solution", color="navy",
+        voltage, current, label="PNP solution", color="navy",
     )
     if True:
         experiment_file = os.path.join(cur_dir, "experiment/4nm-1mol-01.xlsx")
         df = pd.read_excel(experiment_file, header=None)
-        ele_list = np.array(df[0]) / 1000
+        voltage_list = np.array(df[0]) / 1000
         current_list = np.array(df[2])
         if True:
-            ele_list *= -1
+            voltage_list *= -1
             current_list *= -1
-        ax.plot(ele_list, current_list, ".-", label="Experiment", color="brown")
+        ax.plot(voltage_list, current_list, ".-", label="Experiment", color="brown")
     ax.set_xlabel("Voltage (V)", fontsize=font_big)
     ax.set_ylabel("Current (A)", fontsize=font_big)
     ax.tick_params(labelsize=font_mid)
