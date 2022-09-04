@@ -13,6 +13,7 @@ import os
 import json
 import numpy as np
 import scipy.optimize as optimize
+import matplotlib.pyplot as plt
 from mdpy.unit import *
 from mdpy.utils import *
 from job import STR_NAME, generate_json
@@ -83,8 +84,8 @@ class ObjectFunction:
                 float(i) for i in self._reference[reference_name]["voltage"]
             ]
             self._reference[reference_name]["current"] = list(
-                Quantity(self._reference[reference_name]["current"], volt)
-                .convert_to(default_voltage_unit)
+                Quantity(self._reference[reference_name]["current"], ampere)
+                .convert_to(default_current_unit)
                 .value
             )
             self._reference[reference_name]["current"] = [
@@ -136,6 +137,24 @@ class ObjectFunction:
         )
         os.system(command)
 
+    def visualize(self, img_file_path, voltage, current_ref, current_pred):
+        fig, ax = plt.subplots(1, 1, figsize=[16, 9])
+        voltage = Quantity(voltage, default_voltage_unit).convert_to(volt).value
+        current_ref = (
+            Quantity(current_ref, default_current_unit).convert_to(ampere).value
+        )
+        current_pred = (
+            Quantity(current_pred, default_current_unit).convert_to(ampere).value
+        )
+        ax.plot(voltage, current_ref, label="reference")
+        ax.plot(voltage, current_pred, label="prediction")
+        ax.set_xlabel("Voltage (V)", fontsize=20)
+        ax.set_ylabel("Current (A)", fontsize=20)
+        ax.legend(fontsize=20)
+        ax.tick_params(labelsize=15)
+        fig.tight_layout()
+        fig.savefig(img_file_path)
+
     def __call__(self, args):
         global operation
         init_device_file(
@@ -159,12 +178,19 @@ class ObjectFunction:
         )
         error = []
         for key, value in self._reference.items():
-            analyzer = PNPAnalyzer(os.path.join(object_root_dir, key))
+            job_root_dir = os.path.join(object_root_dir, key)
+            analyzer = PNPAnalyzer(job_root_dir)
             current_functions = analyzer.analysis()
             voltage = np.array(value["voltage"])
             current_pred = np.array([f(voltage) for f in current_functions]).sum(0)
             current_ref = np.array(value["current"])
             error.append((current_pred - current_ref) ** 2)
+            self.visualize(
+                os.path.join(job_root_dir, "iv-curve.png"),
+                voltage=voltage,
+                current_ref=current_ref,
+                current_pred=current_pred,
+            )
         error = np.hstack(error).mean()
         dump("get result %.5e" % error, newline=False)
         post("object_fun %s get result %.5e" % (args, error))
@@ -193,6 +219,7 @@ if __name__ == "__main__":
             maxiter=50,
             callback=dump,
             seed=12345,
+            no_local_search=True,
         )
     except:
         post("Job failed")
