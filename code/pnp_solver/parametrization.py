@@ -15,7 +15,6 @@ import numpy as np
 import scipy.optimize as optimize
 from mdpy.unit import *
 from mdpy.utils import *
-from test_pnp_solver import check_dir
 from job import STR_NAME, generate_json
 from analyzer import PNPAnalyzer
 from manager import *
@@ -107,7 +106,7 @@ class ObjectFunction:
                 )
                 json_file_paths.append(
                     generate_json(
-                        json_file_path=os.path.join(job_root_dir, "pnp_job.json"),
+                        json_file_path=os.path.join(job_root_dir, "job.json"),
                         r0=Quantity(value["r0"], angstrom),
                         l0=Quantity(value["l0"], angstrom),
                         w0=Quantity(value["w0"], angstrom),
