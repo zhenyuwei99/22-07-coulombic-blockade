@@ -27,7 +27,7 @@ from manager import *
 
 CUR_DIR = cur_dir = os.path.dirname(os.path.abspath(__file__))
 STR_DIR = os.path.join(CUR_DIR, "str")
-TCL_TEMPLATE_NAME = "model.tcl"
+TCL_TEMPLATE_NAME = "template.tcl"
 STR_NAME = "r0-%.4fA-l0-%.4fA-w0-%.4fA"
 Z_PADDING_LENGTH = Quantity(80, angstrom).convert_to(default_length_unit).value
 CAVITY_PERMITTIVITY = 2
