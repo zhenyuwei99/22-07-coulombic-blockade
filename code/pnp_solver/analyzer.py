@@ -17,9 +17,7 @@ import matplotlib.pyplot as plt
 from scipy import interpolate
 from mdpy.unit import *
 from mdpy.utils import check_quantity
-
-
-ION_DICT = {"pot": 1, "sod": 1, "cal": 2, "cla": -1}
+from job import ION_DICT
 
 
 class PNPAnalyzer:
@@ -39,12 +37,15 @@ class PNPAnalyzer:
             for i in os.listdir(self._root_dir)
             if os.path.exists(os.path.join(self._root_dir, i, "res.grid"))
         ]
-        ele_list = []
-        for target_file in target_files:
-            factor = -1 if "minus" in target_file else 1
-            ele_list.append(
-                factor * float(target_file.split("/")[-2].split("-")[-1].split("V")[0])
-            )
+        ele_list = [
+            float(os.path.dirname(target_file).split("/")[-1].split("V")[0])
+            for target_file in target_files
+        ]
+        # for target_file in target_files:
+        #     factor = -1 if "minus" in target_file else 1
+        #     ele_list.append(
+        #         factor * float(target_file.split("/")[-2].split("-")[-1].split("V")[0])
+        #     )
         ele_list, target_files = [
             list(i) for i in zip(*sorted(zip(ele_list, target_files)))
         ]
@@ -55,7 +56,7 @@ class PNPAnalyzer:
         ion_types = [
             i.split("_")[0] for i in grid.field.__dict__.keys() if "diffusion" in i
         ]
-        ion_valences = [ION_DICT[i.lower()] for i in ion_types]
+        ion_valences = [ION_DICT[i.lower()]["valence"] for i in ion_types]
         z_index = grid.shape[2] // 2
         return ion_types, ion_valences, z_index
 
@@ -127,7 +128,8 @@ class PNPAnalyzer:
 
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    root_dir_name = "out/ls/pot-50.0000-cla-50.0000"
+    pot_ls, cla_ls = 9.4113406, 95.11422504
+    root_dir_name = "out/ls-simulate-annealing/pot-%.4f-cla-%.4f" % (pot_ls, cla_ls)
     root_dir = os.path.join(cur_dir, root_dir_name)
     img_file_path = os.path.join(cur_dir, root_dir_name.split("/")[-1] + ".png")
     print(img_file_path)
