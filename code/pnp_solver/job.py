@@ -87,7 +87,7 @@ Argument for PNP solver job:
 """
 
 
-def job(json_file_path):
+def job(device_file_path, json_file_path):
     # Execution
     try:
         # Parse path
@@ -97,7 +97,7 @@ def job(json_file_path):
         job_name = os.path.basename(root_dir)
         job_dict = read_json(json_file_path)
         if os.path.exists(grid_file_path):
-            print("Job  exists, skipping current job" % job_name)
+            print("Job %s exists, skipping current job" % job_name)
             return None
         device, job = get_available_device(device_file_path)
         with open(log_file_path, "w") as f:
@@ -173,9 +173,10 @@ def job(json_file_path):
             writer = md.io.GridWriter(grid_file_path)
             writer.write(constraint.grid)
         free_device(device_file_path, device, job)
+        post("Finish %s" % job_name)
     except:
         error = traceback.format_exc()
-        raise Exception(error)
+        return error
 
 
 def generate_channel_shape(grid, r0, l0, lb):
@@ -371,7 +372,7 @@ if __name__ == "__main__":
     pool = mp.Pool(num_devices * num_jobs_per_device)
     for json_file_path in sys.argv[4:]:
         print(json_file_path)
-        pool.apply_async(job, args=(json_file_path,), callback=print)
+        pool.apply_async(job, args=(device_file_path, json_file_path), callback=print)
         time.sleep(0.5)
     pool.close()
     pool.join()

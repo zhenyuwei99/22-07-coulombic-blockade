@@ -26,11 +26,17 @@ from mdpy.error import *
 
 
 BSPLINE_ORDER = 4
-NP_DENSITY_THRESHOLD = (
-    (Quantity(500, mol / decimeter ** 3) * NA)
+NP_DENSITY_UPPER_THRESHOLD = (
+    (Quantity(200, mol / decimeter ** 3) * NA)
     .convert_to(1 / default_length_unit ** 3)
     .value
 )
+NP_DENSITY_LOWER_THRESHOLD = (
+    (Quantity(0.01, mol / decimeter ** 3) * NA)
+    .convert_to(1 / default_length_unit ** 3)
+    .value
+)
+
 SUB_EQUATION_ITERATION = 25
 
 
@@ -418,8 +424,8 @@ class FDPoissonNernstPlanckConstraint(Constraint):
             )
             # For converge, avoiding extreme large result in the beginning of iteration
             if not self._is_nernst_plank_equation_within_tolerance:
-                new[new >= NP_DENSITY_THRESHOLD] = NP_DENSITY_THRESHOLD
-                new[new <= -NP_DENSITY_THRESHOLD] = -NP_DENSITY_THRESHOLD
+                new[new >= NP_DENSITY_UPPER_THRESHOLD] = NP_DENSITY_UPPER_THRESHOLD
+                new[new <= 0] = NP_DENSITY_LOWER_THRESHOLD
             ion_density[1:-1, 1:-1, 1:-1] = new
 
     def _update_charge_density(self):
@@ -478,7 +484,7 @@ class FDPoissonNernstPlanckConstraint(Constraint):
                     self._grid,
                     os.path.join(self._img_dir, "iteration-%d.png" % iteration),
                 )
-            self._is_nernst_plank_equation_within_tolerance = iteration >= 200
+            self._is_nernst_plank_equation_within_tolerance = False  # iteration >= 2000
             if iteration % check_freq == 0:
                 if iteration == 0:
                     pre_list = self._get_current_field()

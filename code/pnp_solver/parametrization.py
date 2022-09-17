@@ -129,16 +129,10 @@ class ObjectFunction:
                 )
         return json_file_paths, object_root_dir
 
-    def _execution(self, json_file_path):
-        command = "python %s %s %s" % (
-            self._execution_file_path,
-            self._device_file_path,
-            json_file_path,
-        )
-        os.system(command)
-
-    def visualize(self, img_file_path, voltage, current_ref, current_pred):
-        fig, ax = plt.subplots(1, 1, figsize=[16, 9])
+    def visualize(self, job_root_dir, voltage, current_ref, current_pred):
+        img_file_path = os.path.join(job_root_dir, "iv-curve.png")
+        data = self._reference[os.path.basename(job_root_dir)]
+        fig, ax = plt.subplots(1, 1, figsize=[15, 6])
         voltage = Quantity(voltage, default_voltage_unit).convert_to(volt).value
         current_ref = (
             Quantity(current_ref, default_current_unit).convert_to(ampere).value
@@ -146,10 +140,15 @@ class ObjectFunction:
         current_pred = (
             Quantity(current_pred, default_current_unit).convert_to(ampere).value
         )
-        ax.plot(voltage, current_ref, label="reference")
-        ax.plot(voltage, current_pred, label="prediction")
+        ax.plot(voltage, current_pred, label="PNP solution", color="navy")
+        ax.plot(voltage, current_ref, ".-", label="Experiment", color="brown")
         ax.set_xlabel("Voltage (V)", fontsize=20)
         ax.set_ylabel("Current (A)", fontsize=20)
+        ax.set_title(
+            r"$r_0$=%.3f $\AA$  $l_0$=%.3f $\AA$  $w_0$=%.3f $\AA$"
+            % (data["r0"], data["l0"], data["w0"]),
+            fontsize=20,
+        )
         ax.legend(fontsize=20)
         ax.tick_params(labelsize=15)
         fig.tight_layout()
@@ -186,7 +185,7 @@ class ObjectFunction:
             current_ref = np.array(value["current"])
             error.append((current_pred - current_ref) ** 2)
             self.visualize(
-                os.path.join(job_root_dir, "iv-curve.png"),
+                job_root_dir,
                 voltage=voltage,
                 current_ref=current_ref,
                 current_pred=current_pred,
@@ -201,7 +200,9 @@ if __name__ == "__main__":
     try:
         cur_dir = os.path.dirname(os.path.abspath(__file__))
         execution_file_path = os.path.join(cur_dir, "job.py")
-        root_dir = check_dir(os.path.join(cur_dir, "out/parameterization/test"))
+        root_dir = check_dir(
+            os.path.join(cur_dir, "out/parameterization/ls-simulate-annealing")
+        )
         log_file = os.path.join(root_dir, "minimizer.log")
         object_fun = ObjectFunction(
             root_dir=root_dir,
