@@ -17,7 +17,7 @@ from mdpy.unit import *
 STR_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_FILE_PATH = os.path.join(STR_DIR, "template.tcl")
 SI3N4_LATTICE_MATRIX = np.array([[7.595, 0, 0], [3.798, 6.578, 0], [0, 0, 2.902]])
-SI3N4_LATTICE_LENGTH = np.sqrt((SI3N4_LATTICE_MATRIX**2).sum(1))
+SI3N4_LATTICE_LENGTH = np.sqrt((SI3N4_LATTICE_MATRIX ** 2).sum(1))
 CRYST1 = "CRYST1" + "%9.3f%9.3f%9.3f%7.2f%7.2f%7.2f\n"
 SUPPORTED_IONS = {
     "CES": 1,
@@ -61,7 +61,7 @@ def generate_structure(r0, w0, l0, ls, **ions):
             raise KeyError(
                 "%s not contained in the supported list\n%s" % (key, support_ions)
             )
-        ions[key] = check_quantity_value(value, mol / decimeter**3)
+        ions[key] = check_quantity_value(value, mol / decimeter ** 3)
         ion_type.append(key.upper())
         ion_conc.append(ions[key])
         ion_valence.append(SUPPORTED_IONS[key.upper()])
@@ -103,4 +103,12 @@ def generate_structure(r0, w0, l0, ls, **ions):
 
 
 if __name__ == "__main__":
-    generate_structure(5, 50, 50, 20, pot=Quantity(0.01, mol / decimeter**3))
+    generate_structure(5, 50, 50, 20, pot=Quantity(0.01, mol / decimeter ** 3))
+    generate_structure(
+        5,
+        50,
+        50,
+        20,
+        pot=Quantity(0.01, mol / decimeter ** 3),
+        cal=Quantity(0.01, mol / decimeter ** 3),
+    )
