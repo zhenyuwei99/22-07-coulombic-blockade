@@ -17,7 +17,6 @@ import requests
 
 def mkdir(dir_path):
     try:
-        print(dir_path)
         os.mkdir(dir_path)
     except:
         mkdir(os.path.dirname(dir_path))

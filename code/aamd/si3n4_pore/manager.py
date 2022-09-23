@@ -14,6 +14,7 @@ import sys
 import h5py
 import numpy as np
 import multiprocessing as mp
+from time import sleep
 from job import execute_json
 from utils import *
 
@@ -91,5 +92,7 @@ if __name__ == "__main__":
     )
     for json in jsons:
         pool.apply_async(job, args=(json, DEVICE_FILE_PATH))
+        print("Submit %s" % json)
+        sleep(0.5)
     pool.close()
     pool.join()

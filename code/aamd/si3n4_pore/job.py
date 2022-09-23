@@ -91,6 +91,15 @@ def generate_json(
         },
         "simulation": new_simulation_recipes,
     }
+    # Generate file
+    str_dict = job_dict["str"]
+    structure_name, pdb_file_path, psf_file_path = generate_structure(
+        r0=Quantity(str_dict["r0"], angstrom),
+        l0=Quantity(str_dict["l0"], angstrom),
+        w0=Quantity(str_dict["w0"], angstrom),
+        ls=Quantity(str_dict["ls"], angstrom),
+        **ions
+    )
     # Output
     with open(json_file_path, "w") as f:
         data = json.dumps(job_dict, sort_keys=True, indent=2)
@@ -143,9 +152,9 @@ def execute_json(json_file_path: str, cuda_index: int = 0):
 
 
 if __name__ == "__main__":
-    out_dir = os.path.join(CUR_DIR, "current_voltage_profile/out")
+    out_dir = os.path.join(CUR_DIR, "test/")
     json_file_path = generate_json(
-        json_file_path=os.path.join(out_dir, "test/test01/job.json"),
+        json_file_path=os.path.join(out_dir, "job.json"),
         r0=Quantity(5, angstrom),
         l0=Quantity(50, angstrom),
         w0=Quantity(50, angstrom),
