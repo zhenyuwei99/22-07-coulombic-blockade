@@ -145,14 +145,15 @@ for {set i 0} {$i < [llength $ion_valence]} {incr i} {
 set ion_information [concat $ion_information [list [list CLA $num_cla_ion]]]
 echo $ion_information
 autoionize -psf $current_file_name.psf -pdb $current_file_name.pdb -nions $ion_information -o $file_name\_ionized
+center top "all"
 set current_file_name $file_name\_ionized
 
 # Add constraint
 refresh $current_file_name
-set oxygen [atomselect top "type N"]
-$oxygen set type NSI
-$oxygen set mass 14.0067
-$oxygen set charge -0.575925
+set nitrigen [atomselect top "type N"]
+$nitrigen set type NSI
+$nitrigen set mass 14.0067
+$nitrigen set charge -0.575925
 set silicon [atomselect top "type SI"]
 $silicon set mass 28.0855
 $silicon set charge 0.767900

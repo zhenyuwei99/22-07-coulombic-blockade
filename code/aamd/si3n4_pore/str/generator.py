@@ -17,7 +17,7 @@ from mdpy.unit import *
 STR_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_FILE_PATH = os.path.join(STR_DIR, "template.tcl")
 SI3N4_LATTICE_MATRIX = np.array([[7.595, 0, 0], [3.798, 6.578, 0], [0, 0, 2.902]])
-SI3N4_LATTICE_LENGTH = np.sqrt((SI3N4_LATTICE_MATRIX ** 2).sum(1))
+SI3N4_LATTICE_LENGTH = np.sqrt((SI3N4_LATTICE_MATRIX**2).sum(1))
 CRYST1 = "CRYST1" + "%9.3f%9.3f%9.3f%7.2f%7.2f%7.2f\n"
 SUPPORTED_IONS = {
     "CES": 1,
@@ -30,7 +30,7 @@ SUPPORTED_IONS = {
 }
 
 
-def generate_structrue_name(r0, w0, l0, ls, **ions):
+def generate_structure_name(r0, w0, l0, ls, **ions):
     pore_str_name = ["r0-%.3fA-w0-%.3fA-l0-%.3fA-ls-%.3fA" % (r0, w0, l0, ls)]
     ion_template = "%s-%.2emolPerL"
     ion_str_name, ion_valences = [], []
@@ -61,7 +61,7 @@ def generate_structure(r0, w0, l0, ls, **ions):
             raise KeyError(
                 "%s not contained in the supported list\n%s" % (key, support_ions)
             )
-        ions[key] = check_quantity_value(value, mol / decimeter ** 3)
+        ions[key] = check_quantity_value(value, mol / decimeter**3)
         ion_type.append(key.upper())
         ion_conc.append(ions[key])
         ion_valence.append(SUPPORTED_IONS[key.upper()])
@@ -72,8 +72,8 @@ def generate_structure(r0, w0, l0, ls, **ions):
     ]
     w0 = box_size[0] * SI3N4_LATTICE_LENGTH[0]
     l0 = box_size[2] * SI3N4_LATTICE_LENGTH[2]
-    cryst1_line = CRYST1 % (w0, w0, l0, 90, 90, 60)
-    structure_name = generate_structrue_name(r0, w0, l0, ls, **ions)
+    cryst1_line = CRYST1 % (w0, w0, l0 + 2 * ls, 90, 90, 60)
+    structure_name = generate_structure_name(r0, w0, l0, ls, **ions)
     pdb_file_path = os.path.join(STR_DIR, structure_name + ".pdb")
     psf_file_path = os.path.join(STR_DIR, structure_name + ".psf")
     if not os.path.exists(pdb_file_path) or not os.path.exists(psf_file_path):
@@ -100,15 +100,21 @@ def generate_structure(r0, w0, l0, ls, **ions):
                     os.system("mv %s %s" % (file, pdb_file_path))
             elif structure_name in file:
                 os.remove(file)
+        with open(pdb_file_path, "r") as f:
+            lines = f.readlines()
+        lines[0] = cryst1_line
+        with open(pdb_file_path, "w") as f:
+            print("".join(lines), file=f)
+    return structure_name, pdb_file_path, psf_file_path
 
 
 if __name__ == "__main__":
-    generate_structure(5, 50, 50, 20, pot=Quantity(0.01, mol / decimeter ** 3))
+    generate_structure(5, 50, 50, 20, pot=Quantity(0.01, mol / decimeter**3))
     generate_structure(
         5,
         50,
         50,
         20,
-        pot=Quantity(0.01, mol / decimeter ** 3),
-        cal=Quantity(0.01, mol / decimeter ** 3),
+        pot=Quantity(0.01, mol / decimeter**3),
+        cal=Quantity(0.01, mol / decimeter**3),
     )
