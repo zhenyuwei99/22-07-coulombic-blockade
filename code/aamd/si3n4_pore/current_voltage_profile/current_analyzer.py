@@ -115,25 +115,23 @@ class CurrentAnalyzer:
                 print(key, ion_positions.shape)
             print("Finish dcd")
 
-    def _warp_positions(self, positions):
+    def _analysis_z_center(self, positions):
         scaled_positions = np.dot(positions, self._pbc_inv)
         scaled_positions -= np.round(scaled_positions)
-        return np.dot(scaled_positions, self._pbc_matrix)
-
-    def _analysis_z_center(self, positions):
-        positions = self._warp_positions(positions)
-        with open(
-            "/home/zhenyuwei/simulation_data/22-07-coulombic-blockade/code/aamd/si3n4_pore/str/test.xyz",
-            "w",
-        ) as f:
-            num_particles = positions.shape[1]
-            print("%s\n" % num_particles, file=f)
-            for i in range(num_particles):
-                print("SI %.4f %.4f %.4f" % tuple(positions[100, i, :]), file=f)
+        positions = np.dot(scaled_positions, self._pbc_matrix)
         z_center = positions[:, :, 2].mean()
         return z_center
 
     def _analysis_flux(self, positions, dividing_z):
+        scaled_positions = np.dot(positions, self._pbc_inv)
+        diff = scaled_positions[1:] - scaled_positions[:-1]
+        diff -= np.round(diff)
+        num_frames = positions.shape[0]
+        unwrapped_positions = np.zeros_like(positions)
+        unwrapped_positions[0] = scaled_positions[0] - np.round(scaled_positions[0])
+        for i in range(1, num_frames):
+            unwrapped_positions[i] = unwrapped_positions[i - 1] + diff[i - 1]
+        unwrapped_positions = np.dot(unwrapped_positions, self._pbc_matrix)
         positions = self._warp_positions(positions)
         status = positions[:, :, 2] < dividing_z
         print(status.all(0))
