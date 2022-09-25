@@ -37,15 +37,9 @@ class CurrentAnalyzer:
         self._root_dir = root_dir
         self._sample_prefix = sample_prefix
         self._str_dir = str_dir
-        self._res_dir = str_dir
+        self._res_dir = res_dir
         self._target_jobs, self._ele_list = self._get_jobs()
-        (
-            self._structure_name,
-            self._topology,
-            self._ions,
-            self._pbc_matrix,
-        ) = self._get_structure()
-        self._pbc_inv = np.linalg.inv(self._pbc_matrix)
+        self._structure_name, self._topology, self._ions = self._get_structure()
         self._res_file_path = os.path.join(self._res_dir, self._structure_name + ".npz")
 
     def _get_jobs(self):
@@ -86,26 +80,29 @@ class CurrentAnalyzer:
             "valence": -1,
             "matrix_ids": select(topology, [{"particle name": [[key]]}]),
         }
-        # Get pbc matrix
-        with open(pdb_file_path, "r") as f:
-            line = f.readline()
-        x, y, z, alpha, beta, gamma = [float(i) for i in line.split()[1:]]
-        gamma = np.deg2rad(gamma)
-        pbc_matrix = np.array(
-            [
-                [x, 0, 0],
-                [y * np.cos(gamma), y * np.sin(gamma), 0],
-                [0, 0, z],
-            ]
-        )
-        return structure_name, topology, ions, pbc_matrix
+        return structure_name, topology, ions
 
     def analysis(self):
         sin_matrix_ids = select(self._topology, [{"molecule type": [["SIN"]]}])
+        out_dir = os.path.join(job, self._sample_prefix)
         for job in self._target_jobs[-2:-1]:
-            dcd_file_path = os.path.join(
-                job, self._sample_prefix, self._sample_prefix + ".dcd"
+            # Get pbc matrix
+            pdb_file_path = os.path.join(out_dir, "restart.pdb")
+            with open(pdb_file_path, "r") as f:
+                line = f.readline()
+                line = f.readline()  # Second line
+            x, y, z, alpha, beta, gamma = [float(i) for i in line.split()[1:7]]
+            gamma = np.deg2rad(gamma)
+            self._pbc_matrix = np.array(
+                [
+                    [x, 0, 0],
+                    [y * np.cos(gamma), y * np.sin(gamma), 0],
+                    [0, 0, z],
+                ]
             )
+            self._pbc_inv = np.linalg.inv(self._pbc_matrix)
+            dcd_file_path = os.path.join(out_dir, self._sample_prefix + ".dcd")
+            # dcd_file_path = os.path.join(job, self._sample_prefix, "wrapped.dcd")
             positions = md.io.DCDParser(dcd_file_path).positions
             # sin_center = self._analysis_z_center(positions[:, sin_matrix_ids, :])
             sin_center = self._analysis_z_center(positions[:, :, :])
@@ -132,6 +129,15 @@ class CurrentAnalyzer:
         for i in range(1, num_frames):
             unwrapped_positions[i] = unwrapped_positions[i - 1] + diff[i - 1]
         unwrapped_positions = np.dot(unwrapped_positions, self._pbc_matrix)
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(1, 1, figsize=[16, 9])
+        for i in [1, 5, 24, 58, 60]:
+            ax.plot(unwrapped_positions[:, i, 2])
+        fig.tight_layout()
+        plt.savefig(
+            "/home/zhenyuwei/simulation_data/22-07-coulombic-blockade/code/aamd/si3n4_pore/str/test.png"
+        )
         positions = self._warp_positions(positions)
         status = positions[:, :, 2] < dividing_z
         print(status.all(0))
