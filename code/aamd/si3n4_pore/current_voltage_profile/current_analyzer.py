@@ -115,6 +115,11 @@ class CurrentAnalyzer:
                 print(key, ion_positions.shape)
             print("Finish dcd")
 
+    def _warp_positions(self, positions):
+        scaled_positions = np.dot(positions, self._pbc_inv)
+        scaled_positions -= np.round(scaled_positions)
+        return np.dot(scaled_positions, self._pbc_matrix)
+
     def _analysis_z_center(self, positions):
         positions = self._warp_positions(positions)
         with open(
