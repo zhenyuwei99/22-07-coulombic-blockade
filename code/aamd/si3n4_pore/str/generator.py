@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 """
-file : str.py
+file : generator.py
 created time : 2022/09/17
 author : Zhenyu Wei
 version : 1.0
