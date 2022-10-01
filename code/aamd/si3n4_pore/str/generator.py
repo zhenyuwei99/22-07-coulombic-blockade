@@ -10,6 +10,7 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
 import os
+import mdpy as md
 import numpy as np
 from mdpy.utils import *
 from mdpy.unit import *
@@ -43,7 +44,7 @@ def generate_structure_name(r0, w0, l0, ls, **ions):
     return "-".join(pore_str_name + ion_str_name)
 
 
-def generate_structure(r0, w0, l0, ls, **ions):
+def generate_structure(r0, w0, l0, ls, ions: dict, wall_charges: list = []):
     """
     - `r0` (A): The radius of Si3N4 pore
     - `w0` (A): The width (length on the first and second base vector) of Si3N4 substrate
@@ -105,16 +106,63 @@ def generate_structure(r0, w0, l0, ls, **ions):
         lines[0] = cryst1_line
         with open(pdb_file_path, "w") as f:
             print("".join(lines), file=f)
+        # Modify wall charge
+        with open(psf_file_path, "r") as f:
+            psf = f.readlines()
+        for wall_charge in wall_charges:
+            topology = md.io.PSFParser(psf_file_path).topology
+            matrix_ids = select(topology, [{"molecule type": [["SIN"]]}])
+            positions = md.io.PDBParser(pdb_file_path).positions[matrix_ids, :]
+            r = np.sqrt(
+                (positions[:, 0] - positions[:, 0].mean()) ** 2
+                + (positions[:, 1] - positions[:, 1].mean()) ** 2
+            )
+            z = positions[:, 2]
+            z0 = wall_charge["z0"]
+            theta = np.arccos(positions[:, 0] / r)
+            theta[positions[:, 1] < 0] = 2 * np.pi - theta[positions[:, 1] < 0]  # 0-2pi
+            theta -= np.pi
+            target_thetas = np.linspace(-np.pi, np.pi, wall_charge["n"], endpoint=False)
+            # Normalized
+            r_std = r.std() ** 2
+            r = r / r_std
+            z_std = z.std() ** 2
+            z = z / z_std
+            z0 = z0 / z_std
+            theta_std = theta.std() ** 2
+            theta = theta / theta_std
+            target_thetas = target_thetas / theta_std
+            # Select
+            charge = wall_charge["q"] / wall_charge["n"]
+            for target_theta in target_thetas:
+                mse = r**2
+                mse += (z - z0) ** 2
+                mse += (theta - target_theta) ** 2
+                selected_id = matrix_ids[np.argmin(mse).flatten()[0]] + 1
+                print(matrix_ids[np.argmin(mse).flatten()[0]], end=" ")
+                for index, line in enumerate(psf[selected_id:]):
+                    if str(selected_id) in line.split()[0].strip():
+                        split_line = line.split("0.000000")
+                        new_line = "".join(
+                            [split_line[0], "%8.6f" % charge, split_line[1]]
+                        )
+                        psf[index + selected_id] = new_line
+                        break
+            with open(psf_file_path, "w") as f:
+                print("".join(psf), file=f)
+
     return structure_name, pdb_file_path, psf_file_path
 
 
 if __name__ == "__main__":
-    generate_structure(5, 50, 50, 20, pot=Quantity(0.01, mol / decimeter**3))
     generate_structure(
         5,
         50,
         50,
         20,
-        pot=Quantity(0.01, mol / decimeter**3),
-        cal=Quantity(0.01, mol / decimeter**3),
+        ions={
+            "pot": Quantity(0.01, mol / decimeter**3),
+            "cal": Quantity(0.01, mol / decimeter**3),
+        },
+        wall_charges=[{"z0": 0, "q": 1, "n": 4}],
     )
