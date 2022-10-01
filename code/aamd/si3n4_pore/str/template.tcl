@@ -44,7 +44,7 @@ set ion_valence [list %s]
 if {0} {
     set file_name test
     set box_size {10 10 20}
-    set pore_radius 15
+    set pore_radius 3
     set solvation_height 40
     set ion_type [list CES CAL]
     set ion_conc [list 1e-1 1e-4]
@@ -63,13 +63,18 @@ center top "all"
 save $current_file_name
 
 # Cut nanopore
+set pore_selection "sqrt(x^2 + y^2) <= $pore_radius + 2"
 set psf $current_file_name.psf
 set pdb $current_file_name.pdb
 set pi [expr {4.0*atan(1.0)}]
 set s0 [expr {0.5*$pore_radius}]
-set slope [expr {tan($pore_angle*$pi/180.0)}]
 mol load psf $psf pdb $pdb
-set pore [atomselect top "sqrt(x^2 + y^2) < $pore_radius"]
+set pore [atomselect top $pore_selection]
+set movevec [vecinvert [measure center $pore]]
+$grap moveby [list [lindex $movevec 0] [lindex $movevec 1] 0]
+set pore [atomselect top $pore_selection]
+# center top "all"
+# set slope [expr {tan($pore_angle*$pi/180.0)}]
 # set pore [atomselect top "sqrt(x^2 + y^2) < $s0 + $slope*abs(z)"]
 set pore_atoms [$pore get {segname resid name}]
 $pore delete
@@ -145,18 +150,18 @@ for {set i 0} {$i < [llength $ion_valence]} {incr i} {
 set ion_information [concat $ion_information [list [list CLA $num_cla_ion]]]
 echo $ion_information
 autoionize -psf $current_file_name.psf -pdb $current_file_name.pdb -nions $ion_information -o $file_name\_ionized
-center top "all"
 set current_file_name $file_name\_ionized
+
 
 # Add constraint
 refresh $current_file_name
 set nitrigen [atomselect top "type N"]
 $nitrigen set type NSI
 $nitrigen set mass 14.0067
-$nitrigen set charge -0.575925
+$nitrigen set charge 0
 set silicon [atomselect top "type SI"]
 $silicon set mass 28.0855
-$silicon set charge 0.767900
+$silicon set charge 0
 
 set all [atomselect top all]
 $all set beta 0.0
