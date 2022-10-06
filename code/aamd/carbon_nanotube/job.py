@@ -154,9 +154,15 @@ def execute_json(json_file_path: str, cuda_index: int = 0):
         # Simulation
         sim_dict = job_dict["simulation"]
         num_simulations = sim_dict["num_simulations"]
+        # Copy pdb and psf file
+        target_str_dir = check_dir(os.path.join(root_dir, "str"))
+        target_pdb_file_path = os.path.join(target_str_dir, structure_name + ".pdb")
+        target_psf_file_path = os.path.join(target_str_dir, structure_name + ".psf")
+        os.system("cp %s %s" % (pdb_file_path, target_pdb_file_path))
+        os.system("cp %s %s" % (psf_file_path, target_psf_file_path))
         simulator = Simulator(
-            pdb_file_path=pdb_file_path,
-            psf_file_path=psf_file_path,
+            pdb_file_path=target_pdb_file_path,
+            psf_file_path=target_psf_file_path,
             parameter_file_paths=PARAMETER_FILE_PATHS,
             out_dir=root_dir,
             cuda_index=cuda_index,
