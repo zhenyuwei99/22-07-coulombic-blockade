@@ -25,6 +25,9 @@ SIMULATION_NAME_LIST = [
     "equilibrate_npt",
     "equilibrate_nvt_with_external_field",
     "sample_nvt_with_external_field",
+    "equilibrate_hydration_ion",
+    "equilibrate_fixed_hydration_ion",
+    "sample_hydration_ion",
 ]
 
 
@@ -108,25 +111,33 @@ class Simulator:
         # Set periodic angle
         angle_force = system.getForce(1)
         angle_force.setUsesPeriodicBoundaryConditions(True)
-        # Set restrain
-        restrain_force = openmm.CustomExternalForce(
-            "k*periodicdistance(x, y, z, x0, y0, z0)^2"
-        )
-        restrain_force.addPerParticleParameter("k")
-        restrain_force.addPerParticleParameter("x0")
-        restrain_force.addPerParticleParameter("y0")
-        restrain_force.addPerParticleParameter("z0")
-        for i in range(self._num_restrained_particles):
-            restrain_force.addParticle(
-                i,
-                [
-                    self._restrain_constant[i],
-                    self._restrain_origin[i, 0],
-                    self._restrain_origin[i, 1],
-                    self._restrain_origin[i, 2],
-                ],
+        if False:
+            # Set mass to 0
+            ca_index = []
+            for index, atom in enumerate(self._psf.topology.atoms()):
+                if atom.name == "CA":
+                    ca_index.append(index)
+            [system.setParticleMass(i, 0.0) for i in ca_index]
+        else:
+            # Set restrain
+            restrain_force = openmm.CustomExternalForce(
+                "k*periodicdistance(x, y, z, x0, y0, z0)^2"
             )
-        system.addForce(restrain_force)
+            restrain_force.addPerParticleParameter("k")
+            restrain_force.addPerParticleParameter("x0")
+            restrain_force.addPerParticleParameter("y0")
+            restrain_force.addPerParticleParameter("z0")
+            for i in range(self._num_restrained_particles):
+                restrain_force.addParticle(
+                    i,
+                    [
+                        self._restrain_constant[i],
+                        self._restrain_origin[i, 0],
+                        self._restrain_origin[i, 1],
+                        self._restrain_origin[i, 2],
+                    ],
+                )
+            system.addForce(restrain_force)
         return system
 
     def _add_electric_field_force(
@@ -456,85 +467,306 @@ class Simulator:
     ):
         # Path
         out_dir = self._create_out_dir(out_prefix)
-        if not os.path.exists(os.path.join(out_dir, "restart.pdb")):
-            log_file_path = os.path.join(out_dir, out_prefix + ".log")
-            dcd_file_path = os.path.join(out_dir, out_prefix + ".dcd")
-            hdf5_file_path = os.path.join(out_dir, out_prefix + ".h5")
-            num_epochs = int(np.ceil(num_steps / out_freq))
-            num_steps_per_epoch = num_steps // num_epochs
-            with h5py.File(hdf5_file_path, "w") as h5f:
-                h5f["num_epochs"] = 0
-            # Initialization
-            step_size = step_size * unit.femtosecond
-            temperature = temperature * unit.kelvin
-            electric_field = electric_field * unit.volt / unit.nanometer
-            start_time = datetime.datetime.now().replace(microsecond=0)
-            system = self._create_system()
-            system = self._add_electric_field_force(system, electric_field)
-            integrator = openmm.LangevinIntegrator(
-                temperature, LANGEVIN_FACTOR, step_size
-            )
-            log_reporter = app.StateDataReporter(
-                open(log_file_path, "w"),
-                out_freq,
-                step=True,
-                potentialEnergy=True,
-                kineticEnergy=True,
-                totalEnergy=True,
-                temperature=True,
-                speed=True,
-                totalSteps=num_steps,
-                remainingTime=True,
-                separator="\t",
-            )
-            dcd_reporter = app.DCDReporter(dcd_file_path, out_freq)
-            simulation = app.Simulation(
-                self._psf.topology, system, integrator, self._platform
-            )
-            simulation.context.setPositions(self._cur_positions)
-            simulation.context.setVelocities(self._cur_velocities)
-            simulation.reporters.append(log_reporter)
-            simulation.reporters.append(dcd_reporter)
-            # Sampling
-            for epoch in range(num_epochs):
-                simulation.step(num_steps_per_epoch)
-                with h5py.File(hdf5_file_path, "a") as h5f:
-                    cur_state = simulation.context.getState(
-                        getVelocities=True, getPositions=True, enforcePeriodicBox=True
-                    )
-                    positions = cur_state.getPositions(asNumpy=True) / unit.angstrom
-                    velocities = cur_state.getVelocities(asNumpy=True) / (
-                        unit.angstrom / unit.femtosecond
-                    )
-                    del h5f["num_epochs"]
-                    h5f["num_epochs"] = epoch + 1
-                    group_name = "sample-%d" % epoch
-                    h5f.create_group(group_name)
-                    h5f["%s/sod-positions" % group_name] = positions[self._sod_index, :]
-                    h5f["%s/cla-positions" % group_name] = positions[self._cla_index, :]
-                    h5f["%s/sod-velocities" % group_name] = velocities[
-                        self._sod_index, :
-                    ]
-                    h5f["%s/cla-velocities" % group_name] = velocities[
-                        self._cla_index, :
-                    ]
-            end_time = datetime.datetime.now().replace(microsecond=0)
-            self._dump_log_text(
-                text="Start sampling in NVT ensemble with external electric field at %s"
-                % start_time,
-                log_file_path=log_file_path,
-            )
-            self._dump_log_text(
-                text="Finish sampling in NVT ensemble with external electric field at %s"
-                % end_time,
-                log_file_path=log_file_path,
-            )
-            self._dump_log_text(
-                text="Total runing time %s\n" % (end_time - start_time),
-                log_file_path=log_file_path,
-            )
-            # Dump state
-            self._dump_state(simulation=simulation, out_dir=out_dir)
-        else:
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
             print("%s already finished, skip simulation" % out_prefix)
             self.load_state(out_dir)
+            return
+        log_file_path = os.path.join(out_dir, out_prefix + ".log")
+        dcd_file_path = os.path.join(out_dir, out_prefix + ".dcd")
+        hdf5_file_path = os.path.join(out_dir, out_prefix + ".h5")
+        num_epochs = int(np.ceil(num_steps / out_freq))
+        num_steps_per_epoch = num_steps // num_epochs
+        with h5py.File(hdf5_file_path, "w") as h5f:
+            h5f["num_epochs"] = 0
+        # Initialization
+        step_size = step_size * unit.femtosecond
+        temperature = temperature * unit.kelvin
+        electric_field = electric_field * unit.volt / unit.nanometer
+        start_time = datetime.datetime.now().replace(microsecond=0)
+        system = self._create_system()
+        system = self._add_electric_field_force(system, electric_field)
+        integrator = openmm.LangevinIntegrator(temperature, LANGEVIN_FACTOR, step_size)
+        log_reporter = app.StateDataReporter(
+            open(log_file_path, "w"),
+            out_freq,
+            step=True,
+            potentialEnergy=True,
+            kineticEnergy=True,
+            totalEnergy=True,
+            temperature=True,
+            speed=True,
+            totalSteps=num_steps,
+            remainingTime=True,
+            separator="\t",
+        )
+        dcd_reporter = app.DCDReporter(dcd_file_path, out_freq)
+        simulation = app.Simulation(
+            self._psf.topology, system, integrator, self._platform
+        )
+        simulation.context.setPositions(self._cur_positions)
+        simulation.context.setVelocities(self._cur_velocities)
+        simulation.reporters.append(log_reporter)
+        simulation.reporters.append(dcd_reporter)
+        # Sampling
+        for epoch in range(num_epochs):
+            simulation.step(num_steps_per_epoch)
+            with h5py.File(hdf5_file_path, "a") as h5f:
+                cur_state = simulation.context.getState(
+                    getVelocities=True, getPositions=True, enforcePeriodicBox=True
+                )
+                positions = cur_state.getPositions(asNumpy=True) / unit.angstrom
+                velocities = cur_state.getVelocities(asNumpy=True) / (
+                    unit.angstrom / unit.femtosecond
+                )
+                del h5f["num_epochs"]
+                h5f["num_epochs"] = epoch + 1
+                group_name = "sample-%d" % epoch
+                h5f.create_group(group_name)
+                h5f["%s/sod-positions" % group_name] = positions[self._sod_index, :]
+                h5f["%s/cla-positions" % group_name] = positions[self._cla_index, :]
+                h5f["%s/sod-velocities" % group_name] = velocities[self._sod_index, :]
+                h5f["%s/cla-velocities" % group_name] = velocities[self._cla_index, :]
+        end_time = datetime.datetime.now().replace(microsecond=0)
+        self._dump_log_text(
+            text="Start sampling in NVT ensemble with external electric field at %s"
+            % start_time,
+            log_file_path=log_file_path,
+        )
+        self._dump_log_text(
+            text="Finish sampling in NVT ensemble with external electric field at %s"
+            % end_time,
+            log_file_path=log_file_path,
+        )
+        self._dump_log_text(
+            text="Total runing time %s\n" % (end_time - start_time),
+            log_file_path=log_file_path,
+        )
+        # Dump state
+        self._dump_state(simulation=simulation, out_dir=out_dir)
+
+    def _get_first_index(self, particle_type: int):
+        for index, atom in enumerate(self._psf.topology.atoms()):
+            if atom.name == particle_type:
+                return index
+
+    def equilibrate_hydration_ion(
+        self,
+        num_steps: int,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
+        center_ion_type: str,
+        out_prefix: str,
+        out_freq: int,
+    ):
+        # Path
+        out_dir = self._create_out_dir(out_prefix)
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
+            print("%s already finished, skip simulation" % out_prefix)
+            self.load_state(out_dir)
+            return
+        log_file_path = os.path.join(out_dir, out_prefix + ".log")
+        # Initialization
+        step_size = step_size * unit.femtosecond
+        temperature = temperature * unit.kelvin
+        start_time = datetime.datetime.now().replace(microsecond=0)
+        system = self._create_system()
+        # Constraint force
+        index = self._get_first_index(center_ion_type)
+        restrain_force = openmm.CustomExternalForce("k*((x-x0)^2+(y-y0^2)+(z-z0^2))")
+        restrain_force.addPerParticleParameter("k")
+        restrain_force.addPerParticleParameter("x0")
+        restrain_force.addPerParticleParameter("y0")
+        restrain_force.addPerParticleParameter("z0")
+        restrain_force.addParticle(index, [25, 0.0, 0.0, 0.0])
+        system.addForce(restrain_force)
+        integrator = openmm.LangevinIntegrator(temperature, LANGEVIN_FACTOR, step_size)
+        log_reporter = app.StateDataReporter(
+            open(log_file_path, "w"),
+            out_freq,
+            step=True,
+            potentialEnergy=True,
+            kineticEnergy=True,
+            totalEnergy=True,
+            temperature=True,
+            speed=True,
+            totalSteps=num_steps,
+            remainingTime=True,
+            separator="\t",
+        )
+        simulation = app.Simulation(
+            self._psf.topology, system, integrator, self._platform
+        )
+        simulation.context.setPositions(self._cur_positions)
+        simulation.context.setVelocities(self._cur_velocities)
+        simulation.reporters.append(log_reporter)
+        # Equilibrium
+        simulation.step(num_steps)
+        end_time = datetime.datetime.now().replace(microsecond=0)
+        self._dump_log_text(
+            text="Start equilibrating in NVT ensemble with external electric field at %s"
+            % start_time,
+            log_file_path=log_file_path,
+        )
+        self._dump_log_text(
+            text="Finish equilibrating in NVT ensemble with external electric field at %s"
+            % end_time,
+            log_file_path=log_file_path,
+        )
+        self._dump_log_text(
+            text="Total runing time %s\n" % (end_time - start_time),
+            log_file_path=log_file_path,
+        )
+        # Dump state
+        self._dump_state(simulation=simulation, out_dir=out_dir)
+
+    def equilibrate_fixed_hydration_ion(
+        self,
+        num_steps: int,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
+        center_ion_type: str,
+        out_prefix: str,
+        out_freq: int,
+    ):
+        # Path
+        out_dir = self._create_out_dir(out_prefix)
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
+            print("%s already finished, skip simulation" % out_prefix)
+            self.load_state(out_dir)
+            return
+        log_file_path = os.path.join(out_dir, out_prefix + ".log")
+        # Initialization
+        step_size = step_size * unit.femtosecond
+        temperature = temperature * unit.kelvin
+        start_time = datetime.datetime.now().replace(microsecond=0)
+        index = self._get_first_index(center_ion_type)
+        system = self._create_system()
+        system.setParticleMass(index, 0)
+        integrator = openmm.LangevinIntegrator(temperature, LANGEVIN_FACTOR, step_size)
+        log_reporter = app.StateDataReporter(
+            open(log_file_path, "w"),
+            out_freq,
+            step=True,
+            potentialEnergy=True,
+            kineticEnergy=True,
+            totalEnergy=True,
+            temperature=True,
+            speed=True,
+            totalSteps=num_steps,
+            remainingTime=True,
+            separator="\t",
+        )
+        simulation = app.Simulation(
+            self._psf.topology, system, integrator, self._platform
+        )
+        self._cur_positions[index] = np.zeros(3) * unit.nanometer
+        simulation.context.setPositions(self._cur_positions)
+        simulation.context.setVelocities(self._cur_velocities)
+        simulation.reporters.append(log_reporter)
+        simulation.step(num_steps)
+        end_time = datetime.datetime.now().replace(microsecond=0)
+        self._dump_log_text(
+            text="Start equilibrating in NVT ensemble of fixed ion at %s" % start_time,
+            log_file_path=log_file_path,
+        )
+        self._dump_log_text(
+            text="Finish equilibrating in NVT ensemble of fixed ion at %s" % end_time,
+            log_file_path=log_file_path,
+        )
+        self._dump_log_text(
+            text="Total runing time %s\n" % (end_time - start_time),
+            log_file_path=log_file_path,
+        )
+        # Dump state
+        self._dump_state(simulation=simulation, out_dir=out_dir)
+
+    def sample_hydration_ion(
+        self,
+        num_steps: int,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
+        center_ion_type: str,
+        out_prefix: str,
+        out_freq: int,
+    ):
+        # Path
+        out_dir = self._create_out_dir(out_prefix)
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
+            print("%s already finished, skip simulation" % out_prefix)
+            self.load_state(out_dir)
+            return
+        log_file_path = os.path.join(out_dir, out_prefix + ".log")
+        dcd_file_path = os.path.join(out_dir, out_prefix + ".dcd")
+        hdf5_file_path = os.path.join(out_dir, out_prefix + ".h5")
+        num_epochs = int(np.ceil(num_steps / out_freq))
+        num_steps_per_epoch = num_steps // num_epochs
+        with h5py.File(hdf5_file_path, "w") as h5f:
+            h5f["num_epochs"] = 0
+        # Initialization
+        step_size = step_size * unit.femtosecond
+        temperature = temperature * unit.kelvin
+        start_time = datetime.datetime.now().replace(microsecond=0)
+        system = self._create_system()
+        index = self._get_first_index(center_ion_type)
+        system.setParticleMass(index, 0)
+        integrator = openmm.LangevinIntegrator(temperature, LANGEVIN_FACTOR, step_size)
+        log_reporter = app.StateDataReporter(
+            open(log_file_path, "w"),
+            out_freq,
+            step=True,
+            potentialEnergy=True,
+            kineticEnergy=True,
+            totalEnergy=True,
+            temperature=True,
+            speed=True,
+            totalSteps=num_steps,
+            remainingTime=True,
+            separator="\t",
+        )
+        dcd_reporter = app.DCDReporter(dcd_file_path, out_freq)
+        simulation = app.Simulation(
+            self._psf.topology, system, integrator, self._platform
+        )
+        print(self._cur_positions[index])
+        self._cur_positions[index] = np.zeros(3) * unit.nanometer
+        print(self._cur_positions[index])
+        simulation.context.setPositions(self._cur_positions)
+        simulation.context.setVelocities(self._cur_velocities)
+        simulation.reporters.append(log_reporter)
+        simulation.reporters.append(dcd_reporter)
+        # Sampling
+        for epoch in range(num_epochs):
+            simulation.step(num_steps_per_epoch)
+            with h5py.File(hdf5_file_path, "a") as h5f:
+                cur_state = simulation.context.getState(
+                    getVelocities=True, getPositions=True, enforcePeriodicBox=True
+                )
+                positions = cur_state.getPositions(asNumpy=True) / unit.angstrom
+                velocities = cur_state.getVelocities(asNumpy=True) / (
+                    unit.angstrom / unit.femtosecond
+                )
+                del h5f["num_epochs"]
+                h5f["num_epochs"] = epoch + 1
+                group_name = "sample-%d" % epoch
+                h5f.create_group(group_name)
+                h5f["%s/sod-positions" % group_name] = positions[self._sod_index, :]
+                h5f["%s/cla-positions" % group_name] = positions[self._cla_index, :]
+                h5f["%s/sod-velocities" % group_name] = velocities[self._sod_index, :]
+                h5f["%s/cla-velocities" % group_name] = velocities[self._cla_index, :]
+        end_time = datetime.datetime.now().replace(microsecond=0)
+        self._dump_log_text(
+            text="Start sampling in NVT ensemble with external electric field at %s"
+            % start_time,
+            log_file_path=log_file_path,
+        )
+        self._dump_log_text(
+            text="Finish sampling in NVT ensemble with external electric field at %s"
+            % end_time,
+            log_file_path=log_file_path,
+        )
+        self._dump_log_text(
+            text="Total runing time %s\n" % (end_time - start_time),
+            log_file_path=log_file_path,
+        )
+        # Dump state
+        self._dump_state(simulation=simulation, out_dir=out_dir)
