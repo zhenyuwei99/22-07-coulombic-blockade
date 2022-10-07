@@ -49,7 +49,7 @@ if {0} {
     set n 5
     set m 5
     set ion_type [list POT]
-    set ion_conc [list 1e-1]
+    set ion_conc [list 0e-0]
     set ion_valence [list 1]
 }
 
@@ -179,26 +179,37 @@ writepdb $current_file_name.pdb
 refresh $current_file_name
 resetpsf
 set water [atomselect top "name OH2"]
-set cla_concentration 0
+set cla_concentration 0.0
 for {set i 0} {$i < [llength $ion_valence]} {incr i} {
     set cla_concentration [expr $cla_concentration + [lindex $ion_valence $i] * [lindex $ion_conc $i]]
     echo $cla_concentration
 }
 set total_concentration [expr $cla_concentration * 2]
-set num_per_mol [expr [$water num]/(55.523 + $total_concentration)]
-set ion_information [list]
-set num_cla_ion 0
-for {set i 0} {$i < [llength $ion_valence]} {incr i} {
-    set num_ion [expr int(ceil($num_per_mol * [lindex $ion_conc $i] + 0.5))]
-    set num_cla_ion [expr int($num_cla_ion + [lindex $ion_valence $i] * $num_ion)]
-    set ion_information [linsert $ion_information 0 [
-        list [list [lindex $ion_type $i]] $num_ion
-    ]]
+echo "Is ionized"
+echo [expr $total_concentration != 0.0]
+if {$total_concentration != 0.0} {
+    set num_per_mol [expr [$water num]/(55.523 + $total_concentration)]
+    set ion_information [list]
+    set num_cla_ion 0
+    for {set i 0} {$i < [llength $ion_valence]} {incr i} {
+        set num_ion [expr int(ceil($num_per_mol * [lindex $ion_conc $i] + 0.5))]
+        set num_cla_ion [expr int($num_cla_ion + [lindex $ion_valence $i] * $num_ion)]
+        set ion_information [linsert $ion_information 0 [
+            list [list [lindex $ion_type $i]] $num_ion
+        ]]
+    }
+    set ion_information [concat $ion_information [list [list CLA $num_cla_ion]]]
+    echo $ion_information
+    autoionize -psf $current_file_name.psf -pdb $current_file_name.pdb -nions $ion_information -o $file_name\_ionized
 }
-set ion_information [concat $ion_information [list [list CLA $num_cla_ion]]]
-echo $ion_information
-autoionize -psf $current_file_name.psf -pdb $current_file_name.pdb -nions $ion_information -o $file_name\_ionized
-set current_file_name $file_name\_ionized
+
+if {$total_concentration != 0.0} {
+    set current_file_name $file_name\_ionized
+    echo $current_file_name
+}
+
+echo "ABC"
+echo $current_file_name
 
 # Add constraint
 mol delete all
