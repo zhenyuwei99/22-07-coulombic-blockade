@@ -21,8 +21,9 @@ import openmm.unit as unit
 LANGEVIN_FACTOR = 1 / unit.picosecond
 SIMULATION_NAME_LIST = [
     "minimize",
-    "equilibrate_nvt",
     "equilibrate_npt",
+    "equilibrate_nvt",
+    "sample_nvt",
     "equilibrate_nvt_with_external_field",
     "sample_nvt_with_external_field",
     "equilibrate_hydration_ion",
@@ -387,6 +388,101 @@ class Simulator:
         else:
             print("%s already finished, skip simulation" % out_prefix)
             self.load_state(out_dir)
+
+    def _sample(self, system, integrator, num_steps, out_freq, out_prefix):
+        out_dir = os.path.join(self._out_dir, out_prefix)
+        start_time = datetime.datetime.now().replace(microsecond=0)
+        log_file_path = os.path.join(out_dir, out_prefix + ".log")
+        dcd_file_path = os.path.join(out_dir, out_prefix + ".dcd")
+        hdf5_file_path = os.path.join(out_dir, out_prefix + ".h5")
+        num_epochs = int(np.ceil(num_steps / out_freq))
+        num_steps_per_epoch = num_steps // num_epochs
+        with h5py.File(hdf5_file_path, "w") as h5f:
+            h5f["num_epochs"] = 0
+        log_reporter = app.StateDataReporter(
+            open(log_file_path, "w"),
+            out_freq,
+            step=True,
+            potentialEnergy=True,
+            kineticEnergy=True,
+            totalEnergy=True,
+            temperature=True,
+            speed=True,
+            totalSteps=num_steps,
+            remainingTime=True,
+            separator="\t",
+        )
+        dcd_reporter = app.DCDReporter(dcd_file_path, out_freq)
+        simulation = app.Simulation(
+            self._psf.topology, system, integrator, self._platform
+        )
+        simulation.context.setPositions(self._cur_positions)
+        simulation.context.setVelocities(self._cur_velocities)
+        simulation.reporters.append(log_reporter)
+        simulation.reporters.append(dcd_reporter)
+        # Sampling
+        for epoch in range(num_epochs):
+            simulation.step(num_steps_per_epoch)
+            with h5py.File(hdf5_file_path, "a") as h5f:
+                cur_state = simulation.context.getState(
+                    getVelocities=True, getPositions=True, enforcePeriodicBox=True
+                )
+                positions = cur_state.getPositions(asNumpy=True) / unit.angstrom
+                velocities = cur_state.getVelocities(asNumpy=True) / (
+                    unit.angstrom / unit.femtosecond
+                )
+                del h5f["num_epochs"]
+                h5f["num_epochs"] = epoch + 1
+                group_name = "sample-%d" % epoch
+                h5f.create_group(group_name)
+                h5f["%s/sod-positions" % group_name] = positions[self._sod_index, :]
+                h5f["%s/cla-positions" % group_name] = positions[self._cla_index, :]
+                h5f["%s/sod-velocities" % group_name] = velocities[self._sod_index, :]
+                h5f["%s/cla-velocities" % group_name] = velocities[self._cla_index, :]
+        end_time = datetime.datetime.now().replace(microsecond=0)
+        self._dump_log_text(
+            text="Start sampling at %s" % start_time,
+            log_file_path=log_file_path,
+        )
+        self._dump_log_text(
+            text="Finish sampling at %s" % end_time,
+            log_file_path=log_file_path,
+        )
+        self._dump_log_text(
+            text="Total runing time %s\n" % (end_time - start_time),
+            log_file_path=log_file_path,
+        )
+        # Dump state
+        self._dump_state(simulation=simulation, out_dir=out_dir)
+
+    def sample_nvt(
+        self,
+        num_steps: int,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
+        out_prefix: str,
+        out_freq: int,
+    ):
+        # Path
+        out_dir = self._create_out_dir(out_prefix)
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
+            print("%s already finished, skip simulation" % out_prefix)
+            self.load_state(out_dir)
+            return
+        # Initialization
+        step_size = step_size * unit.femtosecond
+        temperature = temperature * unit.kelvin
+        electric_field = electric_field * unit.volt / unit.nanometer
+        system = self._create_system()
+        integrator = openmm.LangevinIntegrator(temperature, LANGEVIN_FACTOR, step_size)
+        # Sample
+        self._sample(
+            system=system,
+            integrator=integrator,
+            num_steps=num_steps,
+            out_freq=out_freq,
+            out_prefix=out_prefix,
+        )
 
     def equilibrate_nvt_with_external_field(
         self,
