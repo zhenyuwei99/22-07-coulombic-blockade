@@ -33,18 +33,29 @@ SUPPORTED_IONS = {
 
 
 def generate_structure_name(r0, w0, l0, ls, ions, wall_charges):
-    pore_str_name = ["r0-%.3fA-w0-%.3fA-l0-%.3fA-ls-%.3fA" % (r0, w0, l0, ls)]
+    if l0 != 0:
+        pore_str_name = ["pore-r0-%.3fA-w0-%.3fA-l0-%.3fA-ls-%.3fA" % (r0, w0, l0, ls)]
+    else:
+        pore_str_name = ["no-pore-w0-%.3fA-ls-%.3fA" % (w0, ls)]
     ion_template = "%s-%.2emolPerL"
     ion_str_name, ion_valences = [], []
     for key, value in ions.items():
-        ion_str_name += [ion_template % (key.upper(), value)]
-        ion_valences.append(SUPPORTED_IONS[key.upper()])
-    ion_valences, ion_str_name = [
-        list(i) for i in zip(*sorted(zip(ion_valences, ion_str_name)))
-    ]
+        if value != 0:
+            ion_str_name += [ion_template % (key.lower(), value)]
+            ion_valences.append(SUPPORTED_IONS[key.upper()])
+    if len(ion_str_name) != 0:
+        ion_valences, ion_str_name = [
+            list(i) for i in zip(*sorted(zip(ion_valences, ion_str_name)))
+        ]
+    else:
+        ion_str_name = ["no-ion"]
     wall_charges_name = [
-        "z0-%.3fA-q-%.2fe-n-%d" % (i["z0"], i["q"], i["n"]) for i in wall_charges
+        "z0-%.3fA-q-%.2fe-n-%d" % (i["z0"], i["q"], i["n"])
+        for i in wall_charges
+        if i["q"] != 0
     ]
+    if wall_charges_name == []:
+        wall_charges_name = ["no-wall-charge"]
     return "-".join(pore_str_name + ion_str_name + wall_charges_name)
 
 

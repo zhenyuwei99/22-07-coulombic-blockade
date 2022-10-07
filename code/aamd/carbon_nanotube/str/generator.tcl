@@ -43,7 +43,7 @@ set ion_valence [list %s]
 
 if {0} {
     set file_name test
-    set l0 50.0
+    set l0 10.0
     set w0 50.0
     set ls 50.0
     set n 5
@@ -149,18 +149,28 @@ writepdb $file_name\_combined.pdb
 
 # Solvation
 mol deleta all
-set current_file_name $file_name\_combined
-refresh $current_file_name
-set all [atomselect top "all"]
-set minmax [measure minmax $all]
-set min [lindex $minmax 0]
-set max [lindex $minmax 1]
-set min [lreplace $min  2 2 [expr [lindex $min 2] - $ls]]
-set max [lreplace $max  2 2 [expr [lindex $max 2] + $ls]]
-set minmax {}
-set minmax [linsert $minmax 0 $min $max]
-echo $minmax
-solvate $current_file_name.psf $current_file_name.pdb -o $file_name\_solvate -minmax $minmax
+if {$l0 != 0.0} {
+    set current_file_name $file_name\_combined
+    refresh $current_file_name
+    set all [atomselect top "all"]
+    set minmax [measure minmax $all]
+    set min [lindex $minmax 0]
+    set max [lindex $minmax 1]
+    set min [lreplace $min  2 2 [expr [lindex $min 2] - $ls]]
+    set max [lreplace $max  2 2 [expr [lindex $max 2] + $ls]]
+    set minmax {}
+    set minmax [linsert $minmax 0 $min $max]
+    echo $minmax
+    solvate $current_file_name.psf $current_file_name.pdb -o $file_name\_solvate -minmax $minmax
+} else {
+    echo "AAAAAAAAAAAAAAA"
+    set half_w0 [expr $w0 / 2]
+    set min [list -$half_w0 -$half_w0 -$ls]
+    set max [list $half_w0 $half_w0 $ls]
+    set minmax {}
+    set minmax [linsert $minmax 0 $min $max]
+    solvate -o $file_name\_solvate -minmax $minmax
+}
 
 set current_file_name $file_name\_solvate
 refresh $current_file_name
