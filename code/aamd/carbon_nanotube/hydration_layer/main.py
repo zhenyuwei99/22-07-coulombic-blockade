@@ -25,53 +25,64 @@ from str.generator import CC_BOND_LENGTH
 
 
 def generate_simulation_recipe(center_ion_type):
-    return [
+    simulation_recipe = [
         {"name": "minimize", "max_iterations": 500, "out_prefix": "01-minimize"},
         {
-            "name": "equilibrate_nvt",
-            "num_steps": 300000,
-            "step_size": Quantity(0.01, femtosecond),
-            "temperature": Quantity(300, kelvin),
-            "out_prefix": "02-eq-nvt",
-            "out_freq": 10000,
-        },
-        {
             "name": "equilibrate_npt",
-            "num_steps": 400000,
+            "num_steps": 1000000,
             "step_size": Quantity(1, femtosecond),
             "temperature": Quantity(300, kelvin),
             "pressure": 1.0,
-            "out_prefix": "03-eq-npt",
-            "out_freq": 10000,
-        },
-        {
-            "name": "equilibrate_hydration_ion",
-            "num_steps": 1000000,
-            "step_size": Quantity(0.5, femtosecond),
-            "temperature": Quantity(300, kelvin),
-            "center_ion_type": center_ion_type,
-            "out_prefix": "04-eq-hydration-ion",
-            "out_freq": 10000,
-        },
-        {
-            "name": "equilibrate_fixed_hydration_ion",
-            "num_steps": 500000,
-            "step_size": Quantity(0.01, femtosecond),
-            "temperature": Quantity(300, kelvin),
-            "center_ion_type": center_ion_type,
-            "out_prefix": "05-eq-fixed-hydration-ion",
-            "out_freq": 10000,
-        },
-        {
-            "name": "sample_hydration_ion",
-            "num_steps": 10000000,
-            "step_size": Quantity(1, femtosecond),
-            "temperature": Quantity(300, kelvin),
-            "center_ion_type": center_ion_type,
-            "out_prefix": "06-sample-hydration-ion",
+            "out_prefix": "02-eq-npt",
             "out_freq": 10000,
         },
     ]
+    if center_ion_type != "WATER":
+        simulation_recipe.extend(
+            [
+                {
+                    "name": "equilibrate_nvt_with_fixed_ion",
+                    "num_steps": 500000,
+                    "step_size": Quantity(0.01, femtosecond),
+                    "temperature": Quantity(300, kelvin),
+                    "center_ion_type": center_ion_type,
+                    "out_prefix": "03-eq-fixed-hydration-ion",
+                    "out_freq": 10000,
+                },
+                {
+                    "name": "equilibrate_nvt_with_fixed_ion",
+                    "num_steps": 10000000,
+                    "step_size": Quantity(1.0, femtosecond),
+                    "temperature": Quantity(300, kelvin),
+                    "center_ion_type": center_ion_type,
+                    "out_prefix": "04-sample",
+                    "out_freq": 10000,
+                },
+            ]
+        )
+    else:
+        simulation_recipe.extend(
+            [
+                {
+                    "name": "equilibrate_nvt",
+                    "num_steps": 500000,
+                    "step_size": Quantity(0.01, femtosecond),
+                    "temperature": Quantity(300, kelvin),
+                    "out_prefix": "03-eq-nvt",
+                    "out_freq": 10000,
+                },
+                {
+                    "name": "sample_nvt",
+                    "num_steps": 10000000,
+                    "step_size": Quantity(1.0, femtosecond),
+                    "temperature": Quantity(300, kelvin),
+                    "center_ion_type": center_ion_type,
+                    "out_prefix": "04-sample",
+                    "out_freq": 10000,
+                },
+            ]
+        )
+    return simulation_recipe
 
 
 def generate_json_file_path(
@@ -82,14 +93,23 @@ def generate_json_file_path(
             "%s-%.2emolPerL"
             % (key.upper(), check_quantity_value(value, mol / decimeter**3))
             for key, value in ions.items()
+            if check_quantity_value(value, mol / decimeter**3) != 0
         ]
     )
-    str_name = "r0-%.3fA-w0-%.3fA-l0-%.3fA-ls-%.3fA" % (
-        check_quantity_value(r0, angstrom),
-        check_quantity_value(w0, angstrom),
-        check_quantity_value(l0, angstrom),
-        check_quantity_value(ls, angstrom),
-    )
+    if ion_name == "":
+        ion_name = "no-ion"
+    if check_quantity_value(l0, angstrom) != 0:
+        str_name = "pore-r0-%.3fA-w0-%.3fA-l0-%.3fA-ls-%.3fA" % (
+            check_quantity_value(r0, angstrom),
+            check_quantity_value(w0, angstrom),
+            check_quantity_value(l0, angstrom),
+            check_quantity_value(ls, angstrom),
+        )
+    else:
+        str_name = "no-pore-w0-%.3fA-ls-%.3fA" % (
+            check_quantity_value(r0, angstrom),
+            check_quantity_value(ls, angstrom),
+        )
     wall_charge_name = "-".join(
         [
             "z0-%.3fA-q-%.2fe-n-%d"
@@ -99,13 +119,16 @@ def generate_json_file_path(
                 i["n"],
             )
             for i in wall_charges
+            if i["q"] != 0
         ]
     )
-    center_ion_name = "center-%s" % center_ion_type
+    if wall_charge_name == "":
+        wall_charge_name = "no-wall-charge"
+    center_ion_name = "%s" % center_ion_type.lower()
     return os.path.join(
         out_dir,
-        str_name + "-" + ion_name,
         wall_charge_name,
+        str_name + "-" + ion_name,
         center_ion_name,
         "job.json",
     )
@@ -113,65 +136,88 @@ def generate_json_file_path(
 
 if __name__ == "__main__":
     out_dir = os.path.join(CUR_DIR, "out")
-    if False:
-        json_file_path_list = []
-        center_ion_type_list = ["POT", "CLA"]
-        r0 = Quantity(5, angstrom)
-        l0 = Quantity(50, angstrom)
-        w0 = Quantity(50, angstrom)
-        ls = Quantity(50, angstrom)
-        ions = {"POT": Quantity(0.01, mol / decimeter**3)}
-        wall_charges = [{"z0": Quantity(0, angstrom), "q": 0, "n": 0}]
-        for center_ion_type in center_ion_type_list:
-            json_file_path = generate_json_file_path(
-                out_dir=out_dir,
-                r0=r0,
-                l0=l0,
-                w0=w0,
-                ls=ls,
-                ions=ions,
-                center_ion_type=center_ion_type,
-                wall_charges=wall_charges,
-            )
-            json_file_path_list.append(
-                generate_json(
-                    json_file_path=json_file_path,
-                    r0=r0,
-                    l0=l0,
-                    w0=w0,
-                    ls=ls,
-                    wall_charges=wall_charges,
-                    ions=ions,
-                    simulation_recipes=generate_simulation_recipe(center_ion_type),
-                )
-            )
-        command = "python %s %s" % (EXECUTION_FILE_PATH, " ".join(json_file_path_list))
-        os.system(command)
-    r0_list = [
-        Quantity(i * CC_BOND_LENGTH * 3 / (2 * np.pi), angstrom) for i in range(2, 20)
+    job_args = []
+    channel_r0_list = [
+        Quantity(i * CC_BOND_LENGTH * 3 / (2 * np.pi), angstrom) for i in range(6, 10)
     ]
-    l0_list = [Quantity(50, angstrom)]
+    # Job for ion in bulk
+    r0_list = [Quantity(2, angstrom)]
+    l0_list = [Quantity(0, angstrom)]
     w0_list = [Quantity(50, angstrom)]
-    ls_list = [Quantity(50, angstrom)]
-    center_ion_type_list = ["POT", "CLA"]
+    ls_list = [Quantity(25, angstrom)]
     ions_list = [
-        {"POT": Quantity(0.10, mol / decimeter**3)},
+        {"POT": Quantity(0.1, mol / decimeter**3)},
     ]
-    wall_charges_list = [
-        [{"z0": Quantity(0, angstrom), "q": 0.5, "n": 3}],
-        [{"z0": Quantity(0, angstrom), "q": 1, "n": 3}],
-        [{"z0": Quantity(0, angstrom), "q": 1.5, "n": 3}],
-        [{"z0": Quantity(0, angstrom), "q": 2, "n": 3}],
+    center_ion_type_list = ["POT", "CLA"]
+    wall_charges_list = [[]]
+    job_args.extend(
+        list(
+            product(
+                r0_list,
+                l0_list,
+                w0_list,
+                ls_list,
+                ions_list,
+                wall_charges_list,
+                center_ion_type_list,
+            )
+        )
+    )
+    # Job for ion in channel
+    r0_list = channel_r0_list
+    l0_list = [Quantity(50, angstrom)]
+    ions_list = [
+        {"POT": Quantity(0.1, mol / decimeter**3)},
     ]
-    job_args = list(
-        product(
-            r0_list,
-            l0_list,
-            w0_list,
-            ls_list,
-            ions_list,
-            wall_charges_list,
-            center_ion_type_list,
+    center_ion_type_list = ["POT", "CLA"]
+    job_args.extend(
+        list(
+            product(
+                r0_list,
+                l0_list,
+                w0_list,
+                ls_list,
+                ions_list,
+                wall_charges_list,
+                center_ion_type_list,
+            )
+        )
+    )
+    # Job for water in bulk
+    r0_list = [Quantity(2, angstrom)]
+    l0_list = [Quantity(0, angstrom)]
+    ions_list = [
+        {"POT": Quantity(0.0, mol / decimeter**3)},
+    ]
+    center_ion_type_list = ["WATER"]
+    job_args.extend(
+        list(
+            product(
+                r0_list,
+                l0_list,
+                w0_list,
+                ls_list,
+                ions_list,
+                wall_charges_list,
+                center_ion_type_list,
+            )
+        )
+    )
+    # Job for water in channel
+    r0_list = channel_r0_list
+    l0_list = [Quantity(50, angstrom)]
+    center_ion_type_list = ["WATER"]
+    job_args.extend(
+        list(
+            product(
+                r0_list,
+                l0_list,
+                w0_list,
+                ls_list,
+                ions_list,
+                wall_charges_list,
+                center_ion_type_list,
+            )
         )
     )
     print("%s jobs in total" % (len(job_args)))
