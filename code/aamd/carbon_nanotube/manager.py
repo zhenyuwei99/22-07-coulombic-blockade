@@ -21,7 +21,7 @@ from utils import *
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 DEVICE_FILE_PATH = os.path.join(CUR_DIR, "device.h5")
 NUM_DEVICES = 3
-NUM_JOBS_PER_DEVICE = 2
+NUM_JOBS_PER_DEVICE = 1
 
 
 def init_device_file(file_path: str, num_devices: int, num_jobs_per_device: int) -> str:
