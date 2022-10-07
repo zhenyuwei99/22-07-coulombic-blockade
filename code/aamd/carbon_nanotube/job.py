@@ -175,7 +175,8 @@ def execute_json(json_file_path: str, cuda_index: int = 0):
                     args[key] = sim_recipe[key]
             getattr(simulator, sim_recipe["name"])(**args)
     except:
-        error = traceback.format_exc()
+        error = "%s Failed\n" % json_file_path
+        error += traceback.format_exc()
         return error
     return "Finished %s successfully at %s" % (
         json_file_path,
