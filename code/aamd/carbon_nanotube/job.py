@@ -10,6 +10,7 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
 import os
+import sys
 import json
 import datetime
 import traceback
@@ -175,7 +176,10 @@ def execute_json(json_file_path: str, cuda_index: int = 0):
                     args[key] = sim_recipe[key]
             getattr(simulator, sim_recipe["name"])(**args)
     except:
-        error = "%s Failed\n" % json_file_path
+        error = "Failed %s at %s" % (
+            json_file_path,
+            datetime.datetime.now().replace(microsecond=0),
+        )
         error += traceback.format_exc()
         return error
     return "Finished %s successfully at %s" % (
@@ -185,55 +189,9 @@ def execute_json(json_file_path: str, cuda_index: int = 0):
 
 
 if __name__ == "__main__":
-    out_dir = os.path.join(CUR_DIR, "test/")
-    json_file_path = generate_json(
-        json_file_path=os.path.join(out_dir, "job.json"),
-        r0=Quantity(5, angstrom),
-        l0=Quantity(50, angstrom),
-        w0=Quantity(50, angstrom),
-        ls=Quantity(40, angstrom),
-        ions={
-            "POT": Quantity(0.5, mol / decimeter**3),
-            "CAL": Quantity(0.001, mol / decimeter**3),
-        },
-        wall_charges=[{"z0": 0, "q": 1, "n": 4}, {"z0": -5, "q": 2, "n": 4}],
-        simulation_recipes=[
-            {"name": "minimize", "max_iterations": 500, "out_prefix": "01-minimize"},
-            {
-                "name": "equilibrate_nvt",
-                "num_steps": 1000000,
-                "step_size": Quantity(0.01, femtosecond),
-                "temperature": Quantity(300, kelvin),
-                "out_prefix": "02-eq-nvt",
-                "out_freq": 10000,
-            },
-            {
-                "name": "equilibrate_npt",
-                "num_steps": 1000000,
-                "step_size": Quantity(1, femtosecond),
-                "temperature": Quantity(300, kelvin),
-                "pressures": 1.0,
-                "out_prefix": "03-eq-npts",
-                "out_freq": 10000,
-            },
-            {
-                "name": "equilibrate_nvt_with_external_field",
-                "num_steps": 1000000,
-                "step_size": Quantity(0.5, femtosecond),
-                "temperature": Quantity(300, kelvin),
-                "electric_field": Quantity(1, volt / nanometer),
-                "out_prefix": "04-eq-nvt-ele",
-                "out_freq": 10000,
-            },
-            {
-                "name": "sample_nvt_with_external_field",
-                "num_steps": 10000000,
-                "step_size": Quantity(1, femtosecond),
-                "temperature": Quantity(300, kelvin),
-                "electric_field": Quantity(1, volt / nanometer),
-                "out_prefix": "05-sample-nvt-ele",
-                "out_freq": 10000,
-            },
-        ],
-    )
-    print(execute_json(json_file_path))
+    args = sys.argv[1:]
+    json_file_path = args[0]
+    cuda_index = int(args[1])
+    message = execute_json(json_file_path=json_file_path, cuda_index=cuda_index)
+    post(message)
+    print(message)
