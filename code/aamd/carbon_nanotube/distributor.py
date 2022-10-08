@@ -15,6 +15,7 @@ import json
 import time
 import numpy as np
 import multiprocessing as mp
+from datetime import datetime
 from utils import check_dir, post
 
 ZIP_FILE_NAME = "res.zip"
@@ -38,15 +39,11 @@ source ~/.zshrc
 cd $root_dir
 $python_exe job.py $json_file_path $cuda_index
 """
-ZIP_CODE = (
-    """root_dir=%s
-cd $root_dir/run"""
-    + """
+ZIP_CODE = """root_dir=%s
+cd $root_dir/run
 zip -r %s .
 mv res.zip ..
 """
-    % ZIP_FILE_NAME
-)
 
 
 def dump_status(status_file_path: str, status: dict):
@@ -111,6 +108,8 @@ class Distributor:
         self._root_dir = root_dir
 
         self._status_file_path = os.path.join(self._root_dir, "status.json")
+        self._history_file_path = os.path.join(self._root_dir, "history.md")
+        open(self._history_file_path, "w").close()
         self._status = {}
         self._file_topology = {
             ".": {
@@ -196,9 +195,10 @@ class Distributor:
             )
         process = os.popen(command)
         output = process.read()
+        print(output)
         process.close()
 
-    def execute_code(self, device_id: str, command: str, is_verbose: bool = False):
+    def execute_code(self, device_id: str, command: str):
         self._check_device_id(device_id)
         sh_file_path = os.path.join(self._root_dir, device_id + ".sh")
         with open(sh_file_path, "w") as f:
@@ -216,8 +216,7 @@ class Distributor:
         process = os.popen(prefix + sh_file_path)
         output = process.read()
         process.close()
-        if is_verbose:
-            print(output)
+        return output
 
     def zip_init_files(self):
         zip_dir = check_dir(os.path.join(self._root_dir, "init"), restart=True)
@@ -277,12 +276,24 @@ class Distributor:
         return is_finished
 
     def job(self, json_file_path: str):
+        log_file_path = os.path.join(os.path.dirname(json_file_path), "log.md")
+        open(log_file_path, "w").close()
         if self._is_finished(json_file_path=json_file_path):
             return
         device_id = get_free_device(self._status_file_path)
         device_info = self._status[device_id]
         occupy_device(self._status_file_path, device_id)
         self.init_device(device_id)
+        cur_time = datetime.now().replace(microsecond=0)
+        with open(log_file_path, "a") as f:
+            print(
+                "# Overview\nSubmit job to %s at %s" % (device_id, cur_time),
+                file=f,
+            )
+        with open(self._history_file_path, "a") as f:
+            history = "# Device: %s start at %s\n\n" % (device_id, cur_time)
+            history += "Json file path: %s\n" % json_file_path
+            print(history, file=f)
         # Send json_file_path:
         device_dir = os.path.join(device_info["root_dir"], "run")
         device_file_path = os.path.join(device_dir, os.path.basename(json_file_path))
@@ -290,18 +301,33 @@ class Distributor:
             device_id=device_id, host_file_path=json_file_path, device_dir=device_dir
         )
         # Execution
-        command = EXECUTION_CODE % (
-            device_info["root_dir"],
-            device_info["python_exe"],
-            device_file_path,
-            device_info["cuda_index"],
-        )
-        self.execute_code(device_id=device_id, command=command, is_verbose=True)
+        output = ""
+        try:
+            command = EXECUTION_CODE % (
+                device_info["root_dir"],
+                device_info["python_exe"],
+                device_file_path,
+                device_info["cuda_index"],
+            )
+            output = self.execute_code(device_id=device_id, command=command)
+            output += "\n Device id: %s\n" % device_id
+            with open(json_file_path, "r") as f:
+                job_dict = json.load(f)
+        except:
+            output += "Failed"
+        data = json.dumps(job_dict, sort_keys=True, indent=4)
+        data = data.encode("utf-8").decode("unicode_escape")
+        output += data
+        post("Failed", data)
+        with open(log_file_path, "a") as f:
+            print("\n\n# Execution\n\n", output, file=f)
         # Zip
-        command = ZIP_CODE % (device_info["root_dir"],)
+        command = ZIP_CODE % (device_info["root_dir"], ZIP_FILE_NAME)
         self.execute_code(device_id=device_id, command=command)
         # Receive file
-        host_dir = os.path.dirname(json_file_path)
+        output = host_dir = os.path.dirname(json_file_path)
+        with open(log_file_path, "a") as f:
+            print("\n\n# Receive file\n\n", output, file=f)
         self.receive(
             device_id=device_id,
             device_file_path=os.path.join(device_info["root_dir"], ZIP_FILE_NAME),
@@ -315,6 +341,8 @@ class Distributor:
         )
         process = os.popen(command)
         output = process.read()
+        with open(log_file_path, "a") as f:
+            print("\n\n# Unzip file\n\n", output, file=f)
         process.close()
         free_device(self._status_file_path, device_id)
 

@@ -193,5 +193,5 @@ if __name__ == "__main__":
     json_file_path = args[0]
     cuda_index = int(args[1])
     message = execute_json(json_file_path=json_file_path, cuda_index=cuda_index)
-    post(message)
+    # post(message)
     print(message)
