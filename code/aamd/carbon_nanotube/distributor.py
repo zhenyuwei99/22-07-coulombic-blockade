@@ -106,7 +106,8 @@ def free_device(status_file_path: str, device_id: str):
 class Distributor:
     def __init__(self, root_dir: str, code_dir: str) -> None:
         self._root_dir = root_dir
-
+        # Refresh root dir
+        os.system("rm -rf %s/*" % self._root_dir)
         self._status_file_path = os.path.join(self._root_dir, "status.json")
         self._history_file_path = os.path.join(self._root_dir, "history.md")
         open(self._history_file_path, "w").close()
@@ -318,7 +319,10 @@ class Distributor:
         data = json.dumps(job_dict, sort_keys=True, indent=4)
         data = data.encode("utf-8").decode("unicode_escape")
         output += data
-        post("Failed", data)
+        if "Failed" in output:
+            post("Failed", data)
+        else:
+            post("Finished", data)
         with open(log_file_path, "a") as f:
             print("\n\n# Execution\n\n", output, file=f)
         # Zip
@@ -352,7 +356,7 @@ class Distributor:
         for json_file_path in json_file_path_list:
             print("Submit %s" % json_file_path)
             pool.apply_async(self.job, args=(json_file_path,))
-            time.sleep(0.5)
+            time.sleep(1)
         pool.close()
         pool.join()
 
@@ -404,7 +408,7 @@ if __name__ == "__main__":
         port=13776,
         root_dir="~/autodl-tmp/sim-distribute",
         python_exe="/root/miniconda3/envs/mdpy/bin/python",
-        num_devices=1,
+        num_devices=2,
         num_jobs_per_device=1,
     )
     # Test
