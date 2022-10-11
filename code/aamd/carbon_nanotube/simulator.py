@@ -558,14 +558,16 @@ class Simulator:
             out_prefix=out_prefix,
         )
 
-    def _create_system_with_fixed_ion(self, center_ion_type: str):
+    def _create_system_with_fixed_ion(
+        self, center_ion_type: str, center_coordinate: list
+    ):
         system = self._create_system()
         for index, atom in enumerate(self._psf.topology.atoms()):
             if atom.name == center_ion_type:
                 break
         print("Before change: %s %s" % (atom, self._cur_positions[index]))
         system.setParticleMass(index, 0)
-        self._cur_positions[index] = np.zeros(3) * unit.nanometer
+        self._cur_positions[index] = np.array(center_coordinate) * unit.angstrom
         print("After change: %s %s" % (atom, self._cur_positions[index]))
         return system
 
@@ -575,6 +577,7 @@ class Simulator:
         step_size: unit.Quantity,
         temperature: unit.Quantity,
         center_ion_type: str,
+        center_coordinate: list,
         out_prefix: str,
         out_freq: int,
     ):
@@ -585,7 +588,7 @@ class Simulator:
             self.load_state(out_dir)
             return
         # Initialization
-        system = self._create_system_with_fixed_ion(center_ion_type)
+        system = self._create_system_with_fixed_ion(center_ion_type, center_coordinate)
         integrator = openmm.LangevinIntegrator(
             temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
         )
@@ -604,6 +607,7 @@ class Simulator:
         step_size: unit.Quantity,
         temperature: unit.Quantity,
         center_ion_type: str,
+        center_coordinate: list,
         out_prefix: str,
         out_freq: int,
     ):
@@ -614,7 +618,7 @@ class Simulator:
             self.load_state(out_dir)
             return
         # Initialization
-        system = self._create_system_with_fixed_ion(center_ion_type)
+        system = self._create_system_with_fixed_ion(center_ion_type, center_coordinate)
         integrator = openmm.LangevinIntegrator(
             temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
         )
