@@ -268,7 +268,9 @@ class Distributor:
             target_file_path = os.path.join(
                 json_dir, value["out_prefix"], "restart.pdb"
             )
+            print(target_file_path, os.path.exists(target_file_path))
             if not os.path.exists(target_file_path):
+                print(target_file_path)
                 is_finished = False
                 break
         if is_finished:
@@ -353,8 +355,8 @@ class Distributor:
     def __call__(self, json_file_path_list: list):
         print(self.num_devices)
         pool = mp.Pool(self.num_devices)
-        for json_file_path in json_file_path_list:
-            print("Submit %s" % json_file_path)
+        for json_file_path in json_file_path_list[:4]:
+            # print("Submit %s" % json_file_path)
             pool.apply_async(self.job, args=(json_file_path,))
             time.sleep(1)
         pool.close()
@@ -395,11 +397,11 @@ if __name__ == "__main__":
     )
     distributor.register_device(
         label="autodl-01",
-        address="root@region-41.autodl.com",
-        port=30775,
+        address="root@region-3.autodl.com",
+        port=48150,
         root_dir="~/autodl-tmp/sim-distribute",
         python_exe="/root/miniconda3/envs/mdpy/bin/python",
-        num_devices=1,
+        num_devices=2,
         num_jobs_per_device=1,
     )
     distributor.register_device(
