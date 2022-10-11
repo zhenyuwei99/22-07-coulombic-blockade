@@ -104,14 +104,16 @@ def generate_json(
     }
     # Generate file
     str_dict = job_dict["str"]
-    structure_name, pdb_file_path, psf_file_path = generate_structure(
-        r0=Quantity(str_dict["r0"], angstrom),
-        l0=Quantity(str_dict["l0"], angstrom),
-        w0=Quantity(str_dict["w0"], angstrom),
-        ls=Quantity(str_dict["ls"], angstrom),
-        ions=ions.copy(),
-        wall_charges=wall_charges.copy(),
-    )
+    if False:
+        # Suspend in distribute mode
+        structure_name, pdb_file_path, psf_file_path = generate_structure(
+            r0=Quantity(str_dict["r0"], angstrom),
+            l0=Quantity(str_dict["l0"], angstrom),
+            w0=Quantity(str_dict["w0"], angstrom),
+            ls=Quantity(str_dict["ls"], angstrom),
+            ions=ions.copy(),
+            wall_charges=wall_charges.copy(),
+        )
     # Output
     with open(json_file_path, "w") as f:
         data = json.dumps(job_dict, sort_keys=True, indent=4)
