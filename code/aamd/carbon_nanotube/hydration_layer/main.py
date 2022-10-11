@@ -18,13 +18,13 @@ from mdpy.utils import *
 
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 CODE_DIR = os.path.join(CUR_DIR, "..")
-EXECUTION_FILE_PATH = os.path.join(CODE_DIR, "manager.py")
+EXECUTION_FILE_PATH = os.path.join(CODE_DIR, "distributor.py")
 sys.path.append(CODE_DIR)
 from job import generate_json
 from str.generator import CC_BOND_LENGTH
 
 
-def generate_simulation_recipe(center_ion_type):
+def generate_simulation_recipe(center_ion_type, center_coordinate):
     simulation_recipe = [
         {"name": "minimize", "max_iterations": 500, "out_prefix": "01-minimize"},
         {
@@ -46,11 +46,12 @@ def generate_simulation_recipe(center_ion_type):
                     "step_size": Quantity(0.01, femtosecond),
                     "temperature": Quantity(300, kelvin),
                     "center_ion_type": center_ion_type,
+                    "center_coordinate": center_coordinate,
                     "out_prefix": "03-eq-fixed-hydration-ion",
                     "out_freq": 10000,
                 },
                 {
-                    "name": "equilibrate_nvt_with_fixed_ion",
+                    "name": "sample_nvt_with_fixed_ion",
                     "num_steps": 10000000,
                     "step_size": Quantity(1.0, femtosecond),
                     "temperature": Quantity(300, kelvin),
@@ -66,7 +67,7 @@ def generate_simulation_recipe(center_ion_type):
                 {
                     "name": "equilibrate_nvt",
                     "num_steps": 500000,
-                    "step_size": Quantity(0.01, femtosecond),
+                    "step_size": Quantity(0.1, femtosecond),
                     "temperature": Quantity(300, kelvin),
                     "out_prefix": "03-eq-nvt",
                     "out_freq": 10000,
@@ -76,7 +77,6 @@ def generate_simulation_recipe(center_ion_type):
                     "num_steps": 10000000,
                     "step_size": Quantity(1.0, femtosecond),
                     "temperature": Quantity(300, kelvin),
-                    "center_ion_type": center_ion_type,
                     "out_prefix": "04-sample",
                     "out_freq": 10000,
                 },
@@ -86,7 +86,7 @@ def generate_simulation_recipe(center_ion_type):
 
 
 def generate_json_file_path(
-    out_dir, r0, w0, l0, ls, ions, wall_charges, center_ion_type
+    out_dir, r0, w0, l0, ls, ions, wall_charges, center_ion_type, center_coordinate
 ):
     ion_name = "-".join(
         [
@@ -125,6 +125,8 @@ def generate_json_file_path(
     if wall_charge_name == "":
         wall_charge_name = "no-wall-charge"
     center_ion_name = "%s" % center_ion_type.lower()
+    if center_ion_name != "water":
+        center_ion_name += "-%s" % center_coordinate
     return os.path.join(
         out_dir,
         wall_charge_name,
@@ -138,7 +140,7 @@ if __name__ == "__main__":
     out_dir = os.path.join(CUR_DIR, "out")
     job_args = []
     channel_r0_list = [
-        Quantity(i * CC_BOND_LENGTH * 3 / (2 * np.pi), angstrom) for i in range(6, 10)
+        Quantity(i * CC_BOND_LENGTH * 3 / (2 * np.pi), angstrom) for i in range(8, 20)
     ]
     # Job for ion in bulk
     r0_list = [Quantity(2, angstrom)]
@@ -149,6 +151,7 @@ if __name__ == "__main__":
         {"POT": Quantity(0.1, mol / decimeter**3)},
     ]
     center_ion_type_list = ["POT", "CLA"]
+    center_coordinate_list = [[0.0, 0.0, 0.0]]
     wall_charges_list = [[]]
     job_args.extend(
         list(
@@ -160,16 +163,24 @@ if __name__ == "__main__":
                 ions_list,
                 wall_charges_list,
                 center_ion_type_list,
+                center_coordinate_list,
             )
         )
     )
     # Job for ion in channel
     r0_list = channel_r0_list
     l0_list = [Quantity(50, angstrom)]
+    ls_list = [Quantity(25, angstrom)]
     ions_list = [
         {"POT": Quantity(0.1, mol / decimeter**3)},
     ]
     center_ion_type_list = ["POT", "CLA"]
+    center_coordinate_list = [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 25.0],
+        [0.0, 0.0, 20.0],
+        [0.0, 0.0, 20.0],
+    ]
     job_args.extend(
         list(
             product(
@@ -180,16 +191,19 @@ if __name__ == "__main__":
                 ions_list,
                 wall_charges_list,
                 center_ion_type_list,
+                center_coordinate_list,
             )
         )
     )
     # Job for water in bulk
     r0_list = [Quantity(2, angstrom)]
     l0_list = [Quantity(0, angstrom)]
+    ls_list = [Quantity(25, angstrom)]
     ions_list = [
         {"POT": Quantity(0.0, mol / decimeter**3)},
     ]
     center_ion_type_list = ["WATER"]
+    center_coordinate_list = [[0.0, 0.0, 0.0]]
     job_args.extend(
         list(
             product(
@@ -200,12 +214,14 @@ if __name__ == "__main__":
                 ions_list,
                 wall_charges_list,
                 center_ion_type_list,
+                center_coordinate_list,
             )
         )
     )
     # Job for water in channel
     r0_list = channel_r0_list
     l0_list = [Quantity(50, angstrom)]
+    ls_list = [Quantity(25, angstrom)]
     center_ion_type_list = ["WATER"]
     job_args.extend(
         list(
@@ -217,12 +233,22 @@ if __name__ == "__main__":
                 ions_list,
                 wall_charges_list,
                 center_ion_type_list,
+                center_coordinate_list,
             )
         )
     )
     print("%s jobs in total" % (len(job_args)))
     json_file_path_list = []
-    for r0, l0, w0, ls, ions, wall_charges, center_ion_type in job_args:
+    for (
+        r0,
+        l0,
+        w0,
+        ls,
+        ions,
+        wall_charges,
+        center_ion_type,
+        center_coordinate,
+    ) in job_args:
         json_file_path = generate_json_file_path(
             out_dir=out_dir,
             r0=r0,
@@ -231,6 +257,7 @@ if __name__ == "__main__":
             ls=ls,
             ions=ions,
             center_ion_type=center_ion_type,
+            center_coordinate=center_coordinate,
             wall_charges=wall_charges,
         )
         json_file_path_list.append(
@@ -242,8 +269,10 @@ if __name__ == "__main__":
                 ls=ls,
                 wall_charges=wall_charges,
                 ions=ions,
-                simulation_recipes=generate_simulation_recipe(center_ion_type),
+                simulation_recipes=generate_simulation_recipe(
+                    center_ion_type, center_coordinate
+                ),
             )
         )
     command = "python %s %s" % (EXECUTION_FILE_PATH, " ".join(json_file_path_list))
-    os.system(command)
+    # os.system(command)
