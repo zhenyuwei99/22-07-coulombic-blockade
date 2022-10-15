@@ -28,13 +28,11 @@ else
 fi
 """
 EXECUTION_CODE = """root_dir=%s
+vmd_bin=%s
 python_exe=%s
 json_file_path=%s
 cuda_index=%d
-
-export PATH=$PATH:/program/vmd/bin/
-
-source ~/.zshrc
+export PATH=$PATH:$vmd_bin
 
 cd $root_dir
 $python_exe job.py $json_file_path $cuda_index
@@ -135,6 +133,7 @@ class Distributor:
         address: str,
         root_dir: str,
         python_exe: str,
+        vmd_bin: str,
         label: str,
         num_devices: int,
         num_jobs_per_device: int,
@@ -151,6 +150,7 @@ class Distributor:
                     "port": port,
                     "cuda_index": i,
                     "python_exe": python_exe,
+                    "vmd_bin": vmd_bin,
                     "root_dir": device_root_dir,
                     "run_dir": run_dir,
                     "is_occupied": False,
@@ -268,22 +268,18 @@ class Distributor:
             target_file_path = os.path.join(
                 json_dir, value["out_prefix"], "restart.pdb"
             )
-            print(target_file_path, os.path.exists(target_file_path))
             if not os.path.exists(target_file_path):
-                print(target_file_path)
                 is_finished = False
                 break
         if is_finished:
             print("Skip %s" % json_file_path)
-            post("Skip %s" % json_file_path)
         return is_finished
 
     def job(self, json_file_path: str):
         log_file_path = os.path.join(os.path.dirname(json_file_path), "log.md")
         open(log_file_path, "w").close()
-        if self._is_finished(json_file_path=json_file_path):
-            return
         device_id = get_free_device(self._status_file_path)
+        print(device_id)
         device_info = self._status[device_id]
         occupy_device(self._status_file_path, device_id)
         self.init_device(device_id)
@@ -305,9 +301,11 @@ class Distributor:
         )
         # Execution
         output = ""
+        is_failed = False
         try:
             command = EXECUTION_CODE % (
                 device_info["root_dir"],
+                device_info["vmd_bin"],
                 device_info["python_exe"],
                 device_file_path,
                 device_info["cuda_index"],
@@ -318,13 +316,14 @@ class Distributor:
                 job_dict = json.load(f)
         except:
             output += "Failed"
+            is_failed = True
         data = json.dumps(job_dict, sort_keys=True, indent=4)
         data = data.encode("utf-8").decode("unicode_escape")
         output += data
-        if "Failed" in output:
-            post("Failed", data)
+        if is_failed:
+            post_data = "Failed" + data
         else:
-            post("Finished", data)
+            post_data = "Finished" + data
         with open(log_file_path, "a") as f:
             print("\n\n# Execution\n\n", output, file=f)
         # Zip
@@ -351,14 +350,19 @@ class Distributor:
             print("\n\n# Unzip file\n\n", output, file=f)
         process.close()
         free_device(self._status_file_path, device_id)
+        return post_data
 
     def __call__(self, json_file_path_list: list):
         print(self.num_devices)
+        json_file_path_list = [
+            i for i in json_file_path_list if not self._is_finished(i)
+        ]
         pool = mp.Pool(self.num_devices)
-        for json_file_path in json_file_path_list[:4]:
-            # print("Submit %s" % json_file_path)
-            pool.apply_async(self.job, args=(json_file_path,))
-            time.sleep(1)
+        for json_file_path in json_file_path_list:
+            pool.apply_async(
+                self.job, args=(json_file_path,), callback=post, error_callback=print
+            )
+            time.sleep(2)
         pool.close()
         pool.join()
 
@@ -384,6 +388,7 @@ if __name__ == "__main__":
         address="local",
         root_dir="~/Documents/sim-distribute",
         python_exe="/home/zhenyuwei/Programs/anaconda3/envs/openmm/bin/python",
+        vmd_bin="/home/zhenyuwei/Programs/vmd/bin",
         num_devices=3,
         num_jobs_per_device=1,
     )
@@ -392,27 +397,20 @@ if __name__ == "__main__":
         address="zhenyuwei@10.203.154.9",
         root_dir="~/Documents/sim-distribute",
         python_exe="/home/zhenyuwei/Programs/anaconda3/envs/mdpy-dev/bin/python",
+        vmd_bin="/home/zhenyuwei/Programs/vmd/bin",
         num_devices=1,
         num_jobs_per_device=1,
     )
-    distributor.register_device(
-        label="autodl-01",
-        address="root@region-3.autodl.com",
-        port=48150,
-        root_dir="~/autodl-tmp/sim-distribute",
-        python_exe="/root/miniconda3/envs/mdpy/bin/python",
-        num_devices=2,
-        num_jobs_per_device=1,
-    )
-    distributor.register_device(
-        label="autodl-02",
-        address="root@region-41.autodl.com",
-        port=13776,
-        root_dir="~/autodl-tmp/sim-distribute",
-        python_exe="/root/miniconda3/envs/mdpy/bin/python",
-        num_devices=2,
-        num_jobs_per_device=1,
-    )
+    # distributor.register_device(
+    #     label="autodl-a",
+    #     address="root@region-41.autodl.com",
+    #     port=22741,
+    #     root_dir="~/autodl-tmp/sim-distribute",
+    #     python_exe="/root/miniconda3/envs/mdpy/bin/python",
+    #     vmd_bin="/program/vmd/bin",
+    #     num_devices=2,
+    #     num_jobs_per_device=1,
+    # )
     # Test
     if False:
         status = load_status(distributor.status_file_path)
