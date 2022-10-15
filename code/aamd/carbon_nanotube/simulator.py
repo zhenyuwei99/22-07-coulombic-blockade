@@ -12,6 +12,7 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 
 import os
 import datetime
+from symbol import atom
 import h5py
 import numpy as np
 import openmm.openmm as openmm
@@ -27,6 +28,8 @@ SIMULATION_NAME_LIST = [
     "sample_npt",
     "equilibrate_nvt_with_external_field",
     "sample_nvt_with_external_field",
+    "equilibrate_nvt_with_cavity",
+    "sample_nvt_with_cavity",
     "equilibrate_nvt_with_fixed_ion",
     "sample_nvt_with_fixed_ion",
 ]
@@ -237,6 +240,7 @@ class Simulator:
         )
         # Dump state
         self._dump_state(simulation=simulation, out_dir=out_dir)
+        return log_file_path
 
     def _sample(self, system, integrator, num_steps, out_freq, out_prefix):
         out_dir = os.path.join(self._out_dir, out_prefix)
@@ -305,6 +309,7 @@ class Simulator:
         )
         # Dump state
         self._dump_state(simulation=simulation, out_dir=out_dir)
+        return log_file_path
 
     def _create_system(self) -> openmm.System:
         system = self._psf.createSystem(
@@ -551,6 +556,90 @@ class Simulator:
         )
         # Sample
         self._sample(
+            system=system,
+            integrator=integrator,
+            num_steps=num_steps,
+            out_freq=out_freq,
+            out_prefix=out_prefix,
+        )
+
+    def _create_system_with_cavity(self, center_coordinate: list):
+        system = self._create_system()
+        # Set restrain
+        restrain_force = openmm.CustomExternalForce(
+            "k*exp(-r^2/(2*sigma2));r=periodicdistance(x, y, z, x0, y0, z0)"
+        )
+        # restrain_force = openmm.CustomExternalForce(
+        #     "k*exp(-r^2/(2*sigma2));r=sqrt((x-x0)^2 + (y-y0)^2 + (z-z0)^2);f=sqrt(2*pi*sigma2)"
+        # )
+        restrain_force.addGlobalParameter("k", 150)
+        restrain_force.addGlobalParameter("sigma2", (0.3 / 2) ** 2)  # within +-2 sigma
+        restrain_force.addGlobalParameter("pi", np.pi)
+        restrain_force.addGlobalParameter(
+            "x0", center_coordinate[0] * unit.angstrom / unit.nanometer
+        )
+        restrain_force.addGlobalParameter(
+            "y0", center_coordinate[1] * unit.angstrom / unit.nanometer
+        )
+        restrain_force.addGlobalParameter(
+            "z0", center_coordinate[2] * unit.angstrom / unit.nanometer
+        )
+        for i in range(self._num_restrained_particles):
+            restrain_force.addParticle(i, [])
+        system.addForce(restrain_force)
+        return system
+
+    def equilibrate_nvt_with_cavity(
+        self,
+        num_steps: int,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
+        center_coordinate: list,
+        out_prefix: str,
+        out_freq: int,
+    ):
+        # Path
+        out_dir = self._create_out_dir(out_prefix)
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
+            print("%s already finished, skip simulation" % out_prefix)
+            self.load_state(out_dir)
+            return
+        # Initialization
+        system = self._create_system_with_cavity(center_coordinate)
+        integrator = openmm.LangevinIntegrator(
+            temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
+        )
+        # Equilibrate
+        log_file_path = self._equilibrate(
+            system=system,
+            integrator=integrator,
+            num_steps=num_steps,
+            out_freq=out_freq,
+            out_prefix=out_prefix,
+        )
+
+    def sample_nvt_with_cavity(
+        self,
+        num_steps: int,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
+        center_coordinate: list,
+        out_prefix: str,
+        out_freq: int,
+    ):
+        # Path
+        out_dir = self._create_out_dir(out_prefix)
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
+            print("%s already finished, skip simulation" % out_prefix)
+            self.load_state(out_dir)
+            return
+        # Initialization
+        system = self._create_system_with_cavity(center_coordinate)
+        integrator = openmm.LangevinIntegrator(
+            temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
+        )
+        # Sample
+        log_file_path = self._sample(
             system=system,
             integrator=integrator,
             num_steps=num_steps,
