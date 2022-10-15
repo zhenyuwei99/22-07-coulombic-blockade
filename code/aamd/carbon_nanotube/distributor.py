@@ -320,10 +320,12 @@ class Distributor:
         data = json.dumps(job_dict, sort_keys=True, indent=4)
         data = data.encode("utf-8").decode("unicode_escape")
         output += data
+        post_data = {"device": device_id, "json_file_path": json_file_path}
+        post_data = post_data.encode("utf-8").decode("unicode_escape")
         if is_failed:
-            post_data = "Failed" + data
+            post_data = "Failed" + post_data
         else:
-            post_data = "Finished" + data
+            post_data = "Finished" + post_data
         with open(log_file_path, "a") as f:
             print("\n\n# Execution\n\n", output, file=f)
         # Zip
@@ -401,16 +403,6 @@ if __name__ == "__main__":
         num_devices=1,
         num_jobs_per_device=1,
     )
-    # distributor.register_device(
-    #     label="autodl-a",
-    #     address="root@region-41.autodl.com",
-    #     port=22741,
-    #     root_dir="~/autodl-tmp/sim-distribute",
-    #     python_exe="/root/miniconda3/envs/mdpy/bin/python",
-    #     vmd_bin="/program/vmd/bin",
-    #     num_devices=2,
-    #     num_jobs_per_device=1,
-    # )
     # Test
     if False:
         status = load_status(distributor.status_file_path)
