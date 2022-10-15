@@ -32,6 +32,8 @@ SIMULATION_NAME_LIST = [
     "sample_nvt_with_cavity",
     "equilibrate_nvt_with_fixed_ion",
     "sample_nvt_with_fixed_ion",
+    "equilibrate_nvt_with_bias_potential",
+    "sample_nvt_with_bias_potential",
 ]
 
 
@@ -64,14 +66,6 @@ class Simulator:
         self._cur_positions = self._pdb.getPositions()
         self._cur_velocities = None
         self._parse_restrain_file()
-        # Get ion index
-        self._sod_index = []
-        self._cla_index = []
-        for i in self._psf.atom_list:
-            if i.name == "SOD":
-                self._sod_index.append(i.idx)
-            elif i.name == "CLA":
-                self._cla_index.append(i.idx)
 
     def _parse_restrain_file(self):
         restrain_constant = []
@@ -242,7 +236,22 @@ class Simulator:
         self._dump_state(simulation=simulation, out_dir=out_dir)
         return log_file_path
 
-    def _sample(self, system, integrator, num_steps, out_freq, out_prefix):
+    def _sample(
+        self,
+        system,
+        integrator,
+        num_steps,
+        out_freq,
+        out_prefix,
+        is_report_dcd=True,
+        callback=None,
+    ):
+        simulation = app.Simulation(
+            self._psf.topology, system, integrator, self._platform
+        )
+        simulation.context.setPositions(self._cur_positions)
+        simulation.context.setVelocities(self._cur_velocities)
+        # Set reporter
         out_dir = os.path.join(self._out_dir, out_prefix)
         log_file_path = os.path.join(out_dir, out_prefix + ".log")
         dcd_file_path = os.path.join(out_dir, out_prefix + ".dcd")
@@ -261,19 +270,17 @@ class Simulator:
             remainingTime=True,
             separator="\t",
         )
-        dcd_reporter = app.DCDReporter(dcd_file_path, out_freq)
-        simulation = app.Simulation(
-            self._psf.topology, system, integrator, self._platform
-        )
-        simulation.context.setPositions(self._cur_positions)
-        simulation.context.setVelocities(self._cur_velocities)
         simulation.reporters.append(log_reporter)
-        simulation.reporters.append(dcd_reporter)
+        if is_report_dcd:
+            dcd_reporter = app.DCDReporter(dcd_file_path, out_freq)
+            simulation.reporters.append(dcd_reporter)
         # Sampling
         start_time = datetime.datetime.now().replace(microsecond=0)
         num_epochs = int(np.ceil(num_steps / out_freq))
         num_steps_per_epoch = num_steps // num_epochs
         for epoch in range(num_epochs):
+            if not callback is None:
+                callback(simulation)
             simulation.step(num_steps_per_epoch)
         end_time = datetime.datetime.now().replace(microsecond=0)
         self._dump_log_text(
@@ -366,8 +373,8 @@ class Simulator:
     def sample_nvt(
         self,
         num_steps: int,
-        step_size: unit.Quantity,
-        temperature: unit.Quantity,
+        step_size: float,
+        temperature: float,
         out_prefix: str,
         out_freq: int,
     ):
@@ -570,8 +577,8 @@ class Simulator:
     def equilibrate_nvt_with_cavity(
         self,
         num_steps: int,
-        step_size: unit.Quantity,
-        temperature: unit.Quantity,
+        step_size: float,
+        temperature: float,
         center_coordinate: list,
         out_prefix: str,
         out_freq: int,
@@ -599,8 +606,8 @@ class Simulator:
     def sample_nvt_with_cavity(
         self,
         num_steps: int,
-        step_size: unit.Quantity,
-        temperature: unit.Quantity,
+        step_size: float,
+        temperature: float,
         center_coordinate: list,
         out_prefix: str,
         out_freq: int,
@@ -617,7 +624,7 @@ class Simulator:
             temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
         )
         # Sample
-        log_file_path = self._sample(
+        self._sample(
             system=system,
             integrator=integrator,
             num_steps=num_steps,
@@ -641,8 +648,8 @@ class Simulator:
     def equilibrate_nvt_with_fixed_ion(
         self,
         num_steps: int,
-        step_size: unit.Quantity,
-        temperature: unit.Quantity,
+        step_size: float,
+        temperature: float,
         center_ion_type: str,
         center_coordinate: list,
         out_prefix: str,
@@ -671,8 +678,8 @@ class Simulator:
     def sample_nvt_with_fixed_ion(
         self,
         num_steps: int,
-        step_size: unit.Quantity,
-        temperature: unit.Quantity,
+        step_size: float,
+        temperature: float,
         center_ion_type: str,
         center_coordinate: list,
         out_prefix: str,
@@ -698,7 +705,7 @@ class Simulator:
             out_prefix=out_prefix,
         )
 
-    def _create_system_with_bias_potential(self, center_ion_type: str):
+    def _create_system_with_bias_potential(self, center_ion_type: str, z0: float):
         system = self._create_system()
         for index, atom in enumerate(self._psf.topology.atoms()):
             if atom.name == center_ion_type:
@@ -706,5 +713,81 @@ class Simulator:
         restrain_force = openmm.CustomExternalForce("k*((z-z0)^2)")
         restrain_force.addPerParticleParameter("k")
         restrain_force.addPerParticleParameter("z0")
-        restrain_force.addParticle
+        restrain_force.addParticle(index, [25, z0 * unit.angstrom / unit.nanometer])
         return system
+
+    def equilibrate_nvt_with_bias_potential(
+        self,
+        num_steps: int,
+        step_size: float,
+        temperature: float,
+        center_ion_type: str,
+        z0: list,
+        out_prefix: str,
+        out_freq: int,
+    ):
+        # Path
+        out_dir = self._create_out_dir(out_prefix)
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
+            print("%s already finished, skip simulation" % out_prefix)
+            self.load_state(out_dir)
+            return
+        # Initialization
+        system = self._create_system_with_bias_potential(center_ion_type, z0)
+        integrator = openmm.LangevinIntegrator(
+            temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
+        )
+        # Equilibrate
+        self._equilibrate(
+            system=system,
+            integrator=integrator,
+            num_steps=num_steps,
+            out_freq=out_freq,
+            out_prefix=out_prefix,
+        )
+
+    def sample_nvt_with_bias_potential(
+        self,
+        num_steps: int,
+        step_size: float,
+        temperature: float,
+        center_ion_type: str,
+        z0: list,
+        out_prefix: str,
+        out_freq: int,
+    ):
+        # Path
+        out_dir = self._create_out_dir(out_prefix)
+        cv_file_path = os.path.join(out_dir, out_prefix + ".cv")
+        open(cv_file_path, "w").close()
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
+            print("%s already finished, skip simulation" % out_prefix)
+            self.load_state(out_dir)
+            return
+        # Initialization
+        system = self._create_system_with_bias_potential(center_ion_type, z0)
+        integrator = openmm.LangevinIntegrator(
+            temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
+        )
+        for index, atom in enumerate(self._psf.topology.atoms()):
+            if atom.name == center_ion_type:
+                break
+
+        def callback(simulation, index=index, cv_file_path=cv_file_path):
+            cur_state = simulation.context.getState(
+                getPositions=True, enforcePeriodicBox=True
+            )
+            z = cur_state.getPositions(asNumpy=True)[index, 2] / unit.angstrom
+            with open(cv_file_path, "a") as f:
+                print("%s %.4f" % (cur_state.getStepCount(), z), file=f)
+
+        # Sample
+        self._sample(
+            system=system,
+            integrator=integrator,
+            num_steps=num_steps,
+            out_freq=out_freq,
+            out_prefix=out_prefix,
+            callback=callback,
+            is_report_dcd=False,
+        )
