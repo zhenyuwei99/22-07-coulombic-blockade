@@ -710,10 +710,14 @@ class Simulator:
         for index, atom in enumerate(self._psf.topology.atoms()):
             if atom.name == center_ion_type:
                 break
-        restrain_force = openmm.CustomExternalForce("k*((z-z0)^2)")
+        k = 50 * unit.kilocalorie_per_mole / unit.kilojoule_per_mole
+        # restrain_force = openmm.CustomExternalForce("k*((z-z0)^2)")
+        restrain_force = openmm.CustomExternalForce(
+            "k*periodicdistance(0, 0, z, 0, 0, z0)^2"
+        )
         restrain_force.addPerParticleParameter("k")
         restrain_force.addPerParticleParameter("z0")
-        restrain_force.addParticle(index, [25, z0 * unit.angstrom / unit.nanometer])
+        restrain_force.addParticle(index, [200, z0 * unit.angstrom / unit.nanometer])
         return system
 
     def equilibrate_nvt_with_bias_potential(
@@ -774,9 +778,7 @@ class Simulator:
                 break
 
         def callback(simulation, index=index, cv_file_path=cv_file_path):
-            cur_state = simulation.context.getState(
-                getPositions=True, enforcePeriodicBox=True
-            )
+            cur_state = simulation.context.getState(getPositions=True)
             z = cur_state.getPositions(asNumpy=True)[index, 2] / unit.angstrom
             with open(cv_file_path, "a") as f:
                 print("%s %.4f" % (cur_state.getStepCount(), z), file=f)
