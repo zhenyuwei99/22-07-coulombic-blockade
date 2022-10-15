@@ -242,16 +242,12 @@ class Simulator:
         self._dump_state(simulation=simulation, out_dir=out_dir)
         return log_file_path
 
-    def _sample(self, system, integrator, num_steps, out_freq, out_prefix):
+    def _create_sample_simulation(
+        self, system, integrator, num_steps, out_freq, out_prefix
+    ):
         out_dir = os.path.join(self._out_dir, out_prefix)
-        start_time = datetime.datetime.now().replace(microsecond=0)
         log_file_path = os.path.join(out_dir, out_prefix + ".log")
         dcd_file_path = os.path.join(out_dir, out_prefix + ".dcd")
-        hdf5_file_path = os.path.join(out_dir, out_prefix + ".h5")
-        num_epochs = int(np.ceil(num_steps / out_freq))
-        num_steps_per_epoch = num_steps // num_epochs
-        with h5py.File(hdf5_file_path, "w") as h5f:
-            h5f["num_epochs"] = 0
         log_reporter = app.StateDataReporter(
             open(log_file_path, "w"),
             out_freq,
@@ -275,25 +271,9 @@ class Simulator:
         simulation.context.setVelocities(self._cur_velocities)
         simulation.reporters.append(log_reporter)
         simulation.reporters.append(dcd_reporter)
-        # Sampling
-        for epoch in range(num_epochs):
-            simulation.step(num_steps_per_epoch)
-            with h5py.File(hdf5_file_path, "a") as h5f:
-                cur_state = simulation.context.getState(
-                    getVelocities=True, getPositions=True, enforcePeriodicBox=True
-                )
-                positions = cur_state.getPositions(asNumpy=True) / unit.angstrom
-                velocities = cur_state.getVelocities(asNumpy=True) / (
-                    unit.angstrom / unit.femtosecond
-                )
-                del h5f["num_epochs"]
-                h5f["num_epochs"] = epoch + 1
-                group_name = "sample-%d" % epoch
-                h5f.create_group(group_name)
-                h5f["%s/sod-positions" % group_name] = positions[self._sod_index, :]
-                h5f["%s/cla-positions" % group_name] = positions[self._cla_index, :]
-                h5f["%s/sod-velocities" % group_name] = velocities[self._sod_index, :]
-                h5f["%s/cla-velocities" % group_name] = velocities[self._cla_index, :]
+        return simulation, log_file_path
+
+    def _dump_sample_end_information(self, simulation, start_time, log_file_path: str):
         end_time = datetime.datetime.now().replace(microsecond=0)
         self._dump_log_text(
             text="Start sampling at %s" % start_time,
@@ -308,7 +288,21 @@ class Simulator:
             log_file_path=log_file_path,
         )
         # Dump state
-        self._dump_state(simulation=simulation, out_dir=out_dir)
+        self._dump_state(simulation=simulation, out_dir=os.path.dirname(log_file_path))
+
+    def _sample(self, system, integrator, num_steps, out_freq, out_prefix):
+        simulation, log_file_path = self._create_sample_simulation(
+            system, integrator, num_steps, out_freq, out_prefix
+        )
+        # Sampling
+        start_time = datetime.datetime.now().replace(microsecond=0)
+        num_epochs = int(np.ceil(num_steps / out_freq))
+        num_steps_per_epoch = num_steps // num_epochs
+        for epoch in range(num_epochs):
+            simulation.step(num_steps_per_epoch)
+        self._dump_sample_end_information(
+            simulation=simulation, start_time=start_time, log_file_path=log_file_path
+        )
         return log_file_path
 
     def _create_system(self) -> openmm.System:
@@ -385,8 +379,8 @@ class Simulator:
     def sample_nvt(
         self,
         num_steps: int,
-        step_size: unit.Quantity,
-        temperature: unit.Quantity,
+        step_size: float,
+        temperature: float,
         out_prefix: str,
         out_freq: int,
     ):
@@ -569,9 +563,6 @@ class Simulator:
         restrain_force = openmm.CustomExternalForce(
             "k*exp(-r^2/(2*sigma2));r=periodicdistance(x, y, z, x0, y0, z0)"
         )
-        # restrain_force = openmm.CustomExternalForce(
-        #     "k*exp(-r^2/(2*sigma2));r=sqrt((x-x0)^2 + (y-y0)^2 + (z-z0)^2);f=sqrt(2*pi*sigma2)"
-        # )
         restrain_force.addGlobalParameter("k", 150)
         restrain_force.addGlobalParameter("sigma2", (0.3 / 2) ** 2)  # within +-2 sigma
         restrain_force.addGlobalParameter("pi", np.pi)
@@ -592,8 +583,8 @@ class Simulator:
     def equilibrate_nvt_with_cavity(
         self,
         num_steps: int,
-        step_size: unit.Quantity,
-        temperature: unit.Quantity,
+        step_size: float,
+        temperature: float,
         center_coordinate: list,
         out_prefix: str,
         out_freq: int,
@@ -621,8 +612,8 @@ class Simulator:
     def sample_nvt_with_cavity(
         self,
         num_steps: int,
-        step_size: unit.Quantity,
-        temperature: unit.Quantity,
+        step_size: float,
+        temperature: float,
         center_coordinate: list,
         out_prefix: str,
         out_freq: int,
@@ -663,8 +654,8 @@ class Simulator:
     def equilibrate_nvt_with_fixed_ion(
         self,
         num_steps: int,
-        step_size: unit.Quantity,
-        temperature: unit.Quantity,
+        step_size: float,
+        temperature: float,
         center_ion_type: str,
         center_coordinate: list,
         out_prefix: str,
@@ -693,8 +684,8 @@ class Simulator:
     def sample_nvt_with_fixed_ion(
         self,
         num_steps: int,
-        step_size: unit.Quantity,
-        temperature: unit.Quantity,
+        step_size: float,
+        temperature: float,
         center_ion_type: str,
         center_coordinate: list,
         out_prefix: str,
@@ -708,6 +699,49 @@ class Simulator:
             return
         # Initialization
         system = self._create_system_with_fixed_ion(center_ion_type, center_coordinate)
+        integrator = openmm.LangevinIntegrator(
+            temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
+        )
+        # Sample
+        self._sample(
+            system=system,
+            integrator=integrator,
+            num_steps=num_steps,
+            out_freq=out_freq,
+            out_prefix=out_prefix,
+        )
+
+    def _create_system_with_bias_potential(self, target_ion_type: str):
+        system = self._create_system()
+        for index, atom in enumerate(self._psf.topology.atoms()):
+            if atom.name == target_ion_type:
+                break
+        restrain_force = openmm.CustomExternalForce("k*((z-z0)^2)")
+        restrain_force.addPerParticleParameter("k")
+        restrain_force.addPerParticleParameter("z0")
+        restrain_force.addParticle(index, [25, 0])
+        return system, index
+
+    def _sample_nvt_with_bias_potential(
+        self,
+        num_steps: int,
+        step_size: float,
+        temperature: float,
+        z_start: float,
+        z_end: float,
+        num_samples: int,
+        target_ion_type: str,
+        out_prefix: str,
+        out_freq: int,
+    ):
+        # Path
+        out_dir = self._create_out_dir(out_prefix)
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
+            print("%s already finished, skip simulation" % out_prefix)
+            self.load_state(out_dir)
+            return
+        # Initialization
+        system = self._create_system_with_bias_potential(target_ion_type)
         integrator = openmm.LangevinIntegrator(
             temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
         )
