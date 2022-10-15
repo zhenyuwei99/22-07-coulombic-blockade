@@ -242,9 +242,7 @@ class Simulator:
         self._dump_state(simulation=simulation, out_dir=out_dir)
         return log_file_path
 
-    def _create_sample_simulation(
-        self, system, integrator, num_steps, out_freq, out_prefix
-    ):
+    def _sample(self, system, integrator, num_steps, out_freq, out_prefix):
         out_dir = os.path.join(self._out_dir, out_prefix)
         log_file_path = os.path.join(out_dir, out_prefix + ".log")
         dcd_file_path = os.path.join(out_dir, out_prefix + ".dcd")
@@ -271,9 +269,12 @@ class Simulator:
         simulation.context.setVelocities(self._cur_velocities)
         simulation.reporters.append(log_reporter)
         simulation.reporters.append(dcd_reporter)
-        return simulation, log_file_path
-
-    def _dump_sample_end_information(self, simulation, start_time, log_file_path: str):
+        # Sampling
+        start_time = datetime.datetime.now().replace(microsecond=0)
+        num_epochs = int(np.ceil(num_steps / out_freq))
+        num_steps_per_epoch = num_steps // num_epochs
+        for epoch in range(num_epochs):
+            simulation.step(num_steps_per_epoch)
         end_time = datetime.datetime.now().replace(microsecond=0)
         self._dump_log_text(
             text="Start sampling at %s" % start_time,
@@ -288,21 +289,7 @@ class Simulator:
             log_file_path=log_file_path,
         )
         # Dump state
-        self._dump_state(simulation=simulation, out_dir=os.path.dirname(log_file_path))
-
-    def _sample(self, system, integrator, num_steps, out_freq, out_prefix):
-        simulation, log_file_path = self._create_sample_simulation(
-            system, integrator, num_steps, out_freq, out_prefix
-        )
-        # Sampling
-        start_time = datetime.datetime.now().replace(microsecond=0)
-        num_epochs = int(np.ceil(num_steps / out_freq))
-        num_steps_per_epoch = num_steps // num_epochs
-        for epoch in range(num_epochs):
-            simulation.step(num_steps_per_epoch)
-        self._dump_sample_end_information(
-            simulation=simulation, start_time=start_time, log_file_path=log_file_path
-        )
+        self._dump_state(simulation=simulation, out_dir=out_dir)
         return log_file_path
 
     def _create_system(self) -> openmm.System:
@@ -379,8 +366,8 @@ class Simulator:
     def sample_nvt(
         self,
         num_steps: int,
-        step_size: float,
-        temperature: float,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
         out_prefix: str,
         out_freq: int,
     ):
@@ -583,8 +570,8 @@ class Simulator:
     def equilibrate_nvt_with_cavity(
         self,
         num_steps: int,
-        step_size: float,
-        temperature: float,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
         center_coordinate: list,
         out_prefix: str,
         out_freq: int,
@@ -612,8 +599,8 @@ class Simulator:
     def sample_nvt_with_cavity(
         self,
         num_steps: int,
-        step_size: float,
-        temperature: float,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
         center_coordinate: list,
         out_prefix: str,
         out_freq: int,
@@ -654,8 +641,8 @@ class Simulator:
     def equilibrate_nvt_with_fixed_ion(
         self,
         num_steps: int,
-        step_size: float,
-        temperature: float,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
         center_ion_type: str,
         center_coordinate: list,
         out_prefix: str,
@@ -684,8 +671,8 @@ class Simulator:
     def sample_nvt_with_fixed_ion(
         self,
         num_steps: int,
-        step_size: float,
-        temperature: float,
+        step_size: unit.Quantity,
+        temperature: unit.Quantity,
         center_ion_type: str,
         center_coordinate: list,
         out_prefix: str,
@@ -711,45 +698,13 @@ class Simulator:
             out_prefix=out_prefix,
         )
 
-    def _create_system_with_bias_potential(self, target_ion_type: str):
+    def _create_system_with_bias_potential(self, center_ion_type: str):
         system = self._create_system()
         for index, atom in enumerate(self._psf.topology.atoms()):
-            if atom.name == target_ion_type:
+            if atom.name == center_ion_type:
                 break
         restrain_force = openmm.CustomExternalForce("k*((z-z0)^2)")
         restrain_force.addPerParticleParameter("k")
         restrain_force.addPerParticleParameter("z0")
-        restrain_force.addParticle(index, [25, 0])
-        return system, index
-
-    def _sample_nvt_with_bias_potential(
-        self,
-        num_steps: int,
-        step_size: float,
-        temperature: float,
-        z_start: float,
-        z_end: float,
-        num_samples: int,
-        target_ion_type: str,
-        out_prefix: str,
-        out_freq: int,
-    ):
-        # Path
-        out_dir = self._create_out_dir(out_prefix)
-        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
-            print("%s already finished, skip simulation" % out_prefix)
-            self.load_state(out_dir)
-            return
-        # Initialization
-        system = self._create_system_with_bias_potential(target_ion_type)
-        integrator = openmm.LangevinIntegrator(
-            temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
-        )
-        # Sample
-        self._sample(
-            system=system,
-            integrator=integrator,
-            num_steps=num_steps,
-            out_freq=out_freq,
-            out_prefix=out_prefix,
-        )
+        restrain_force.addParticle
+        return system
