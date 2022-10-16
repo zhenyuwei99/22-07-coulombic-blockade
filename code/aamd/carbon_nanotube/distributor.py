@@ -18,6 +18,8 @@ import multiprocessing as mp
 from datetime import datetime
 from utils import check_dir, post
 
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+JOB_FILE_PATH = os.path.join(CUR_DIR, "job.py")
 ZIP_FILE_NAME = "res.zip"
 REFRESH_CODE = """root_dir=%s
 if [ -d $root_dir ]
@@ -155,7 +157,6 @@ class Distributor:
                     "run_dir": run_dir,
                     "is_occupied": False,
                 }
-                # self.init_device(device_id=device_id)
         dump_status(status_file_path=self._status_file_path, status=self._status)
 
     def _check_device_id(self, device_id: str):
@@ -276,13 +277,14 @@ class Distributor:
         return is_finished
 
     def job(self, json_file_path: str):
+        with open(json_file_path, "r") as f:
+            job_dict = json.load(f)
         log_file_path = os.path.join(os.path.dirname(json_file_path), "log.md")
         open(log_file_path, "w").close()
         device_id = get_free_device(self._status_file_path)
         print(device_id)
         device_info = self._status[device_id]
         occupy_device(self._status_file_path, device_id)
-        self.init_device(device_id)
         cur_time = datetime.now().replace(microsecond=0)
         with open(log_file_path, "a") as f:
             print(
@@ -293,65 +295,88 @@ class Distributor:
             history = "# Device: %s start at %s\n\n" % (device_id, cur_time)
             history += "Json file path: %s\n" % json_file_path
             print(history, file=f)
-        # Send json_file_path:
-        device_dir = os.path.join(device_info["root_dir"], "run")
-        device_file_path = os.path.join(device_dir, os.path.basename(json_file_path))
-        self.send(
-            device_id=device_id, host_file_path=json_file_path, device_dir=device_dir
-        )
-        # Execution
-        output = ""
-        is_failed = False
-        try:
-            command = EXECUTION_CODE % (
-                device_info["root_dir"],
-                device_info["vmd_bin"],
-                device_info["python_exe"],
-                device_file_path,
+        if device_info["address"] == "local":
+            exe_output = ""
+            command = "python %s %s %d" % (
+                JOB_FILE_PATH,
+                json_file_path,
                 device_info["cuda_index"],
             )
-            output = self.execute_code(device_id=device_id, command=command)
-            output += "\n Device id: %s\n" % device_id
-            with open(json_file_path, "r") as f:
-                job_dict = json.load(f)
-        except:
-            output += "Failed"
-            is_failed = True
-        data = json.dumps(job_dict, sort_keys=True, indent=4)
-        data = data.encode("utf-8").decode("unicode_escape")
-        output += data
+            try:
+                process = os.popen(command)
+                exe_output = process.read()
+                process.close()
+            except:
+                print("Here")
+                exe_output += "Failed"
+            data = json.dumps(job_dict, sort_keys=True, indent=4)
+            data = data.encode("utf-8").decode("unicode_escape")
+            exe_output += data
+            with open(log_file_path, "a") as f:
+                print("\n\n# Execution\n\n", exe_output, file=f)
+        else:
+            self.init_device(device_id)
+            # Send json_file_path:
+            device_dir = os.path.join(device_info["root_dir"], "run")
+            device_file_path = os.path.join(
+                device_dir, os.path.basename(json_file_path)
+            )
+            self.send(
+                device_id=device_id,
+                host_file_path=json_file_path,
+                device_dir=device_dir,
+            )
+            # Execution
+            exe_output = ""
+            try:
+                command = EXECUTION_CODE % (
+                    device_info["root_dir"],
+                    device_info["vmd_bin"],
+                    device_info["python_exe"],
+                    device_file_path,
+                    device_info["cuda_index"],
+                )
+                exe_output = self.execute_code(device_id=device_id, command=command)
+                exe_output += "\n Device id: %s\n" % device_id
+            except:
+                exe_output += "Failed"
+            data = json.dumps(job_dict, sort_keys=True, indent=4)
+            data = data.encode("utf-8").decode("unicode_escape")
+            exe_output += data
+            with open(log_file_path, "a") as f:
+                print("\n\n# Execution\n\n", exe_output, file=f)
+            # Zip
+            command = ZIP_CODE % (device_info["root_dir"], ZIP_FILE_NAME)
+            self.execute_code(device_id=device_id, command=command)
+            # Receive file
+            output = host_dir = os.path.dirname(json_file_path)
+            with open(log_file_path, "a") as f:
+                print("\n\n# Receive file\n\n", output, file=f)
+            self.receive(
+                device_id=device_id,
+                device_file_path=os.path.join(device_info["root_dir"], ZIP_FILE_NAME),
+                host_dir=host_dir,
+            )
+            # Unzip
+            command = "cd %s && unzip -o %s && rm -rf %s" % (
+                host_dir,
+                ZIP_FILE_NAME,
+                ZIP_FILE_NAME,
+            )
+            process = os.popen(command)
+            output = process.read()
+            with open(log_file_path, "a") as f:
+                print("\n\n# Unzip file\n\n", output, file=f)
+            process.close()
+        free_device(self._status_file_path, device_id)
+        # Post
         post_data = {"device": device_id, "json_file_path": json_file_path}
+        post_data = json.dumps(post_data, sort_keys=True, indent=4)
         post_data = post_data.encode("utf-8").decode("unicode_escape")
-        if is_failed:
+        if "Traceback" in exe_output:
             post_data = "Failed" + post_data
         else:
             post_data = "Finished" + post_data
-        with open(log_file_path, "a") as f:
-            print("\n\n# Execution\n\n", output, file=f)
-        # Zip
-        command = ZIP_CODE % (device_info["root_dir"], ZIP_FILE_NAME)
-        self.execute_code(device_id=device_id, command=command)
-        # Receive file
-        output = host_dir = os.path.dirname(json_file_path)
-        with open(log_file_path, "a") as f:
-            print("\n\n# Receive file\n\n", output, file=f)
-        self.receive(
-            device_id=device_id,
-            device_file_path=os.path.join(device_info["root_dir"], ZIP_FILE_NAME),
-            host_dir=host_dir,
-        )
-        # Unzip
-        command = "cd %s && unzip -o %s && rm -rf %s" % (
-            host_dir,
-            ZIP_FILE_NAME,
-            ZIP_FILE_NAME,
-        )
-        process = os.popen(command)
-        output = process.read()
-        with open(log_file_path, "a") as f:
-            print("\n\n# Unzip file\n\n", output, file=f)
-        process.close()
-        free_device(self._status_file_path, device_id)
         return post_data
 
     def __call__(self, json_file_path_list: list):
