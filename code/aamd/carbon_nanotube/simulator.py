@@ -34,6 +34,7 @@ SIMULATION_NAME_LIST = [
     "sample_nvt_with_fixed_ion",
     "equilibrate_nvt_with_bias_potential",
     "sample_nvt_with_bias_potential",
+    "sample_metadynamics",
 ]
 
 
@@ -245,6 +246,7 @@ class Simulator:
         out_prefix,
         is_report_dcd=True,
         callback=None,
+        simulation_operator=None,
     ):
         simulation = app.Simulation(
             self._psf.topology, system, integrator, self._platform
@@ -281,7 +283,10 @@ class Simulator:
         for epoch in range(num_epochs):
             if not callback is None:
                 callback(simulation)
-            simulation.step(num_steps_per_epoch)
+            if simulation_operator is None:
+                simulation.step(num_steps_per_epoch)
+            else:
+                simulation_operator(simulation, num_steps_per_epoch)
         end_time = datetime.datetime.now().replace(microsecond=0)
         self._dump_log_text(
             text="Start sampling at %s" % start_time,
@@ -717,7 +722,7 @@ class Simulator:
         )
         restrain_force.addPerParticleParameter("k")
         restrain_force.addPerParticleParameter("z0")
-        restrain_force.addParticle(index, [200, z0 * unit.angstrom / unit.nanometer])
+        restrain_force.addParticle(index, [k, z0 * unit.angstrom / unit.nanometer])
         return system
 
     def equilibrate_nvt_with_bias_potential(
@@ -791,5 +796,84 @@ class Simulator:
             out_freq=out_freq,
             out_prefix=out_prefix,
             callback=callback,
+            is_report_dcd=False,
+        )
+
+    def _create_bias_variables(self, center_ion_type: str, z_range: list):
+        for index, atom in enumerate(self._psf.topology.atoms()):
+            if atom.name == center_ion_type:
+                break
+        converter = unit.angstrom / unit.nanometer
+        collective_variable = openmm.CustomExternalForce(
+            "periodicdistance(0, 0, z, 0, 0, 0)"
+        )
+        collective_variable.addParticle(index, [])
+        bias_variable = app.metadynamics.BiasVariable(
+            force=collective_variable,
+            minValue=z_range[0] * converter,
+            maxValue=z_range[1] * converter,
+            biasWidth=0.5 * converter,
+            periodic=False,
+        )
+        return [bias_variable]
+
+    def sample_metadynamics(
+        self,
+        num_steps: int,
+        step_size: float,
+        temperature: float,
+        center_ion_type: str,
+        z_range: list,
+        out_prefix: str,
+        out_freq: int,
+    ):
+        # Path
+        out_dir = self._create_out_dir(out_prefix)
+        h5_file_path = os.path.join(out_dir, out_prefix + ".h5")
+        with h5py.File(h5_file_path, "w") as h5f:
+            h5f["num_epochs"] = 0
+        if os.path.exists(os.path.join(out_dir, "restart.pdb")):
+            print("%s already finished, skip simulation" % out_prefix)
+            self.load_state(out_dir)
+            return
+        # Initialization
+        system = self._create_system()
+        bias_variable = self._create_bias_variables(center_ion_type, z_range)
+        metadynamics = app.Metadynamics(
+            system=system,
+            variables=bias_variable,
+            temperature=temperature * unit.kelvin,
+            biasFactor=2,
+            height=0.5 * unit.kilojoule_per_mole,
+            frequency=100,
+            saveFrequency=1000,
+            biasDir=out_dir,
+        )
+        integrator = openmm.LangevinIntegrator(
+            temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
+        )
+
+        def simulation_operator(
+            simulation,
+            num_steps_per_epoch,
+            metadynamics=metadynamics,
+            h5_file_path=h5_file_path,
+        ):
+            metadynamics.step(simulation, num_steps_per_epoch)
+            with h5py.File(h5_file_path, "r") as h5f:
+                epoch = h5f["num_epochs"][()]
+            with h5py.File(h5_file_path, "a") as h5f:
+                del h5f["num_epochs"]
+                h5f["num_epochs"] = epoch + 1
+                h5f["%s" % epoch] = metadynamics.getFreeEnergy()
+
+        # Sample
+        self._sample(
+            system=system,
+            integrator=integrator,
+            num_steps=num_steps,
+            out_freq=out_freq,
+            out_prefix=out_prefix,
+            simulation_operator=simulation_operator,
             is_report_dcd=False,
         )
