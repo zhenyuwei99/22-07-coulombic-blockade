@@ -176,7 +176,14 @@ def execute_json(json_file_path: str, cuda_index: int = 0):
             for key, value in sim_recipe.items():
                 if not "order" in key and not "name" in key:
                     args[key] = sim_recipe[key]
-            getattr(simulator, sim_recipe["name"])(**args)
+            restart_file_path = os.path.join(
+                root_dir, sim_recipe["out_prefix"], "restart.pdb"
+            )
+            if not os.path.exists(restart_file_path):
+                getattr(simulator, sim_recipe["name"])(**args)
+            else:
+                simulator.load_state(out_dir=os.path.dirname(restart_file_path))
+                print("Skip %s" % sim_recipe["out_prefix"])
     except:
         error = "Failed %s at %s" % (
             json_file_path,
