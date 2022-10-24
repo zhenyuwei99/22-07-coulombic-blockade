@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 """
-file : validate.py
+file : validate_superposition.py
 created time : 2022/10/09
 author : Zhenyu Wei
 version : 1.0
@@ -45,33 +45,6 @@ if __name__ == "__main__":
         bulk_pot_res = md.analyser.load_analyser_result(bulk_pot_file_path)
         pore_water_res = md.analyser.load_analyser_result(pore_water_file_path)
         pore_pot_res = md.analyser.load_analyser_result(pore_pot_file_path)
-
-        # def target(factor, params):
-        #     factor = factor[0]
-        #     res0 = params[0] / factor
-        #     res1 = params[1] / factor
-        #     res2 = params[2] / factor
-        #     new_res = res0 * res1
-        #     return np.mean((new_res - res2) ** 2, where=res2 != 0) + np.mean(
-        #         (res0 - 1) ** 2, where=res0 != 0
-        #     )
-
-        # opt_res = optimize.dual_annealing(
-        #     func=target,
-        #     # x0=np.array([1]),
-        #     # method="BFGS",
-        #     bounds=[[1e-5, 10]],
-        #     args=(
-        #         [
-        #             bulk_pot_res.data["mean"],
-        #             pore_water_res.data["mean"],
-        #             pore_pot_res.data["mean"],
-        #         ],
-        #     ),
-        #     maxiter=2000,
-        #     callback=print,
-        # )
-        # print(opt_res)
         new_res = bulk_pot_res.data["mean"] * pore_water_res.data["mean"]
         all_res = [
             bulk_pot_res.data["mean"],
