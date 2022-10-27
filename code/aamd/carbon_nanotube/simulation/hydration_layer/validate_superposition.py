@@ -14,7 +14,6 @@ import matplotlib
 import numpy as np
 import mdpy as md
 import matplotlib.pyplot as plt
-import scipy.optimize as optimize
 from itertools import product
 from mdpy.unit import *
 
