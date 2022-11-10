@@ -13,7 +13,90 @@ import os
 import numpy as np
 from scipy import signal
 from mdpy.unit import *
+from mdpy.utils import check_quantity_value, check_quantity
 from hydration import *
+from utils import *
+
+
+def get_hydration_potential(
+    r0: Quantity,
+    z0: Quantity,
+    n0: Quantity,
+    bin_range: np.ndarray,
+    bin_width: float,
+    pore_file_path: str,
+    ion_file_path: str,
+):
+    r0 = check_quantity_value(r0, angstrom)
+    z0 = check_quantity_value(z0, angstrom)
+    n0 = check_quantity_value(n0, 1 / angstrom**3)
+    g_pore = HydrationDistributionFunction(json_file_path=pore_file_path)
+    g_ion = HydrationDistributionFunction(json_file_path=ion_file_path)
+    r_cut = get_sigmoid_length(g_ion.bulk_alpha) + g_ion.bulk_rb
+    bin_range = bin_range.copy()
+    # Ion coordinate
+    x_ion, y_ion, z_ion = np.meshgrid(
+        np.arange(-r_cut, r_cut + bin_width, bin_width),
+        np.arange(-r_cut, r_cut + bin_width, bin_width),
+        np.arange(-r_cut, r_cut + bin_width, bin_width),
+        indexing="ij",
+    )
+    # Origin coordinate
+    x, y, z = np.meshgrid(
+        np.arange(bin_range[0, 0], bin_range[0, 1] + bin_width, bin_width),
+        np.arange(bin_range[1, 0], bin_range[1, 1] + bin_width, bin_width),
+        np.arange(bin_range[2, 0], bin_range[2, 1] + bin_width, bin_width),
+        indexing="ij",
+    )
+    # Extend coordinate
+    bin_range[:, 0] -= r_cut
+    bin_range[:, 1] += r_cut
+    x_extend, y_extend, z_extend = np.meshgrid(
+        np.arange(bin_range[0, 0], bin_range[0, 1] + bin_width, bin_width),
+        np.arange(bin_range[1, 0], bin_range[1, 1] + bin_width, bin_width),
+        np.arange(bin_range[2, 0], bin_range[2, 1] + bin_width, bin_width),
+        indexing="ij",
+    )
+    # Convolve
+    pore_distance = get_pore_distance(x_extend, y_extend, z_extend, r0=r0, z0=z0)
+    ion_distance = get_distance(x_ion, y_ion, z_ion)
+
+    f = g_pore(pore_distance)
+    g = g_ion(ion_distance)
+    g = g * np.log(g)
+    g = -(Quantity(300 * g, kelvin) * KB).convert_to(kilocalorie_permol).value
+    energy_factor = bin_width**3 * n0
+    print(g.sum() * energy_factor)
+    potential = (g.sum() - signal.fftconvolve(f, g, "valid")) * energy_factor
+
+    return x, y, z, potential
+
+
+def get_nonpolar_potential(
+    sigma,
+    epsilon,
+    r0: Quantity,
+    z0: Quantity,
+    n0: Quantity,
+    bin_range: np.ndarray,
+    bin_width: float,
+):
+    sigma = check_quantity_value(sigma, angstrom)
+    epsilon = check_quantity_value(epsilon, kilocalorie_permol)
+    r0 = check_quantity_value(r0, angstrom)
+    z0 = check_quantity_value(z0, angstrom)
+    n0 = check_quantity_value(n0, 1 / angstrom**3)
+    x, y, z = np.meshgrid(
+        np.arange(bin_range[0, 0], bin_range[0, 1] + bin_width, bin_width),
+        np.arange(bin_range[1, 0], bin_range[1, 1] + bin_width, bin_width),
+        np.arange(bin_range[2, 0], bin_range[2, 1] + bin_width, bin_width),
+        indexing="ij",
+    )
+    pore_distance = get_pore_distance(x, y, z, r0=r0, z0=z0)
+    relative_distance = (sigma / pore_distance) ** 6
+    potential = 4 * epsilon * (relative_distance**2 - relative_distance)
+    return x, y, z, potential
+
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
@@ -23,43 +106,48 @@ if __name__ == "__main__":
     img_file_path = os.path.join(
         os.path.join(cur_dir, "image/test_hydration_energy.png")
     )
-    ion, target = "cla", "oxygen"
+    ion, target = "pot", "hydrogen"
     pore_file_path = os.path.join(out_dir, "%s-pore.json" % target)
     ion_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
 
-    g_pore = HydrationDistributionFunction(json_file_path=pore_file_path)
-    g_ion = HydrationDistributionFunction(json_file_path=ion_file_path)
-
-    r0 = 6
-    z0 = 3
-    bin_width = 0.5
-    bin_range = [-25, 25]
-    x, y, z = np.meshgrid(
-        np.arange(bin_range[0], bin_range[1], bin_width),
-        np.arange(bin_range[0], bin_range[1], bin_width),
-        np.arange(bin_range[0], bin_range[1], bin_width),
-        indexing="ij",
+    sigma = Quantity(1.992 * 2 ** (5 / 6), angstrom)
+    epsilon = Quantity(0.070, kilocalorie_permol)
+    r0 = Quantity(20, angstrom)
+    z0 = Quantity(5, angstrom)
+    n0 = Quantity(1.014, kilogram / decimeter**3) / Quantity(18, dalton)
+    if target == "hydrogen":
+        n0 *= Quantity(2)
+    bin_width = 0.25
+    bin_range = np.array([[-25.0, 25], [-25, 25], [-25, 25]])
+    x, y, z, hydration_potential = get_hydration_potential(
+        r0=r0,
+        z0=z0,
+        n0=n0,
+        bin_range=bin_range,
+        bin_width=bin_width,
+        pore_file_path=pore_file_path,
+        ion_file_path=ion_file_path,
     )
-
-    pore_distance = get_pore_distance(x, y, z, r0=r0, z0=z0)
-    ion_distance = get_distance(x, y, z)
-
-    f = g_pore(pore_distance)
-    g = g_ion(ion_distance)
-    g = g * np.log(g)
-    g = -(Quantity(300 * g, kelvin) * KB).convert_to(kilocalorie_permol).value
-    print(g.sum() * bin_width**3)
-    res = (signal.fftconvolve(f, g, "same") - g.sum()) * bin_width**3
-
+    x, y, z, nonpolar_potential = get_nonpolar_potential(
+        sigma=sigma,
+        epsilon=epsilon,
+        r0=r0,
+        z0=z0,
+        n0=n0,
+        bin_range=bin_range,
+        bin_width=bin_width,
+    )
+    potential = hydration_potential + nonpolar_potential
+    potential[potential >= 5] = 5
     fig, ax = plt.subplots(1, 1)
     half_index = x.shape[1] // 2
     if True:
         target_slice = (
-            slice(15, -15),
+            slice(None, None),
             half_index,
-            slice(15, -15),
+            slice(None, None),
         )
-        c = ax.contourf(x[target_slice], z[target_slice], res[target_slice], 100)
+        c = ax.contourf(x[target_slice], z[target_slice], potential[target_slice], 200)
         fig.colorbar(c)
     else:
         target_slice = (
@@ -67,6 +155,6 @@ if __name__ == "__main__":
             half_index,
             slice(10, -10),
         )
-        ax.plot(z[target_slice], res[target_slice])
+        ax.plot(z[target_slice], potential[target_slice])
     fig.tight_layout()
     fig.savefig(img_file_path)
