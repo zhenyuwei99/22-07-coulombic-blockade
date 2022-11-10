@@ -50,9 +50,9 @@ def generate_simulation_recipe(center_ion_type, z_range):
             "step_size": Quantity(1, femtosecond),
             "temperature": Quantity(300, kelvin),
             "center_ion_type": center_ion_type,
-            "z_range": z_range,
+            # "z_range": z_range,
             "out_prefix": "04-sample-metad",
-            "out_freq": 1000,
+            "out_freq": 10000,
         },
     ]
     return simulation_recipe
@@ -154,3 +154,19 @@ if __name__ == "__main__":
         )
     command = "python %s %s" % (EXECUTION_FILE_PATH, " ".join(json_file_path_list))
     os.system(command)
+
+    # def target(file_path, cuda_index):
+    #     exe_file_path = os.path.join(CODE_DIR, "job.py")
+    #     os.system("python %s %s %d" % (exe_file_path, file_path, cuda_index))
+
+    # import multiprocessing as mp
+    # from time import sleep
+
+    # target_file_path = "/home/zhenyuwei/simulation_data/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/free_energy_profile/out/metad/no-wall-charge/POT-1.00e-01molPerL/pore-r0-8.125A-w0-50.000A-l0-50.000A-ls-25.000A-pot/job.json"
+    # pool = mp.Pool(1)
+    # for i in range(1):
+    #     for j in range(1):
+    #         pool.apply_async(target, args=(target_file_path, i))
+    #         sleep(1)
+    # pool.close()
+    # pool.join()
