@@ -547,6 +547,29 @@ class Simulator:
         integrator = openmm.LangevinIntegrator(
             temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
         )
+
+        ion_position_file_path = os.path.join(self._out_dir, out_freq + ".ion")
+        anti_ion_type = ["CA", "H1", "H2", "OH1"]
+        atom_index, atom_name = [], []
+        for index, atom in enumerate(self._psf.topology.atoms()):
+            if not atom.name in anti_ion_type:
+                atom_index.append(index)
+                atom_name.append(atom.name)
+
+        def callback(
+            simulation,
+            atom_index=atom_index,
+            atom_name=atom_name,
+            ion_position_file_path=ion_position_file_path,
+        ):
+            cur_state = simulation.context.getState(getPositions=True)
+            z = cur_state.getPositions(asNumpy=True)[atom_index, 2] / unit.angstrom
+            with open(ion_position_file_path, "a") as f:
+                print("Step %d" % cur_state.getStepCount(), file=f)
+                for index, name in enumerate(atom_name):
+                    print("%s %.4f" % (name, z[index]), file=f)
+                print("", file=f)
+
         # Sample
         self._sample(
             system=system,
@@ -554,6 +577,8 @@ class Simulator:
             num_steps=num_steps,
             out_freq=out_freq,
             out_prefix=out_prefix,
+            callback=callback,
+            is_report_dcd=False,
         )
 
     def _create_system_with_cavity(self, center_coordinate: list):
@@ -562,20 +587,15 @@ class Simulator:
         restrain_force = openmm.CustomExternalForce(
             "k*exp(-r^2/(2*sigma2));r=periodicdistance(x, y, z, x0, y0, z0)"
         )
-        restrain_force.addGlobalParameter("k", 150)
+        restrain_force.addGlobalParameter("k", 200)
         restrain_force.addGlobalParameter("sigma2", (0.3 / 2) ** 2)  # within +-2 sigma
         restrain_force.addGlobalParameter("pi", np.pi)
-        restrain_force.addGlobalParameter(
-            "x0", center_coordinate[0] * unit.angstrom / unit.nanometer
-        )
-        restrain_force.addGlobalParameter(
-            "y0", center_coordinate[1] * unit.angstrom / unit.nanometer
-        )
-        restrain_force.addGlobalParameter(
-            "z0", center_coordinate[2] * unit.angstrom / unit.nanometer
-        )
-        for i in range(self._num_restrained_particles):
-            restrain_force.addParticle(i, [])
+        restrain_force.addGlobalParameter("x0", center_coordinate[0] / 10)
+        restrain_force.addGlobalParameter("y0", center_coordinate[1] / 10)
+        restrain_force.addGlobalParameter("z0", center_coordinate[2] / 10)
+        for index, atom in enumerate(self._psf.topology.atoms()):
+            if not "C" in atom.name:
+                restrain_force.addParticle(index, [])
         system.addForce(restrain_force)
         return system
 
@@ -799,23 +819,43 @@ class Simulator:
             is_report_dcd=False,
         )
 
-    def _create_bias_variables(self, center_ion_type: str, z_range: list):
-        for index, atom in enumerate(self._psf.topology.atoms()):
+    def _create_bias_variables(self, center_ion_type: str, index: int):
+        target_index = []
+        for atom_id, atom in enumerate(self._psf.topology.atoms()):
             if atom.name == center_ion_type:
-                break
-        converter = unit.angstrom / unit.nanometer
+                target_index.append(atom_id)
+        index = target_index[index]
         collective_variable = openmm.CustomExternalForce(
             "periodicdistance(0, 0, z, 0, 0, 0)"
         )
         collective_variable.addParticle(index, [])
-        bias_variable = app.metadynamics.BiasVariable(
+        value = self._psf.topology.getPeriodicBoxVectors()[2][2] / unit.nanometer
+        bias_variable1 = app.metadynamics.BiasVariable(
             force=collective_variable,
-            minValue=z_range[0] * converter,
-            maxValue=z_range[1] * converter,
-            biasWidth=0.5 * converter,
+            minValue=0,
+            maxValue=value / 2 + 0.1,
+            biasWidth=0.05,
             periodic=False,
         )
-        return [bias_variable]
+
+        collective_variable = openmm.CustomExternalForce(
+            "periodicdistance(x, y, 0, 0, 0, 0)"
+        )
+        collective_variable.addParticle(index, [])
+        value = (
+            self._psf.topology.getPeriodicBoxVectors()[0][0] / unit.nanometer
+        ) ** 2 + (
+            self._psf.topology.getPeriodicBoxVectors()[1][1] / unit.nanometer
+        ) ** 2
+        value = np.sqrt(value)
+        bias_variable2 = app.metadynamics.BiasVariable(
+            force=collective_variable,
+            minValue=0,
+            maxValue=value / 2 + 0.1,
+            biasWidth=0.05,
+            periodic=False,
+        )
+        return [bias_variable1]
 
     def sample_metadynamics(
         self,
@@ -823,13 +863,13 @@ class Simulator:
         step_size: float,
         temperature: float,
         center_ion_type: str,
-        z_range: list,
         out_prefix: str,
         out_freq: int,
     ):
         # Path
         out_dir = self._create_out_dir(out_prefix)
         h5_file_path = os.path.join(out_dir, out_prefix + ".h5")
+        npy_file_path = os.path.join(out_dir, "free_energy.npy")
         with h5py.File(h5_file_path, "w") as h5f:
             h5f["num_epochs"] = 0
         if os.path.exists(os.path.join(out_dir, "restart.pdb")):
@@ -838,15 +878,15 @@ class Simulator:
             return
         # Initialization
         system = self._create_system()
-        bias_variable = self._create_bias_variables(center_ion_type, z_range)
+        bias_variable = self._create_bias_variables(center_ion_type, 1)
         metadynamics = app.Metadynamics(
             system=system,
             variables=bias_variable,
             temperature=temperature * unit.kelvin,
-            biasFactor=2,
-            height=0.5 * unit.kilojoule_per_mole,
+            biasFactor=10,
+            height=0.1 * unit.kilocalorie_per_mole / 100,
             frequency=100,
-            saveFrequency=1000,
+            saveFrequency=5000,
             biasDir=out_dir,
         )
         integrator = openmm.LangevinIntegrator(
@@ -858,14 +898,16 @@ class Simulator:
             num_steps_per_epoch,
             metadynamics=metadynamics,
             h5_file_path=h5_file_path,
+            npy_file_path=npy_file_path,
         ):
             metadynamics.step(simulation, num_steps_per_epoch)
             with h5py.File(h5_file_path, "r") as h5f:
                 epoch = h5f["num_epochs"][()]
+            res = metadynamics.getFreeEnergy() / unit.kilojoule_per_mole
             with h5py.File(h5_file_path, "a") as h5f:
                 del h5f["num_epochs"]
                 h5f["num_epochs"] = epoch + 1
-                h5f["%s" % epoch] = metadynamics.getFreeEnergy()
+                np.save(npy_file_path, res)
 
         # Sample
         self._sample(
