@@ -32,7 +32,8 @@ def get_hydration_potential(
     n0 = check_quantity_value(n0, 1 / angstrom**3)
     g_pore = HydrationDistributionFunction(json_file_path=pore_file_path)
     g_ion = HydrationDistributionFunction(json_file_path=ion_file_path)
-    r_cut = get_sigmoid_length(g_ion.bulk_alpha) + g_ion.bulk_rb
+    r_cut = get_sigmoid_length(g_ion.bulk_alpha) + g_ion.bulk_rb + 4
+    print("alpha %.3f, rb %.3f, rcut %.3f" % (g_ion.bulk_alpha, g_ion.bulk_rb, r_cut))
     bin_range = bin_range.copy()
     # Ion coordinate
     x_ion, y_ion, z_ion = np.meshgrid(
@@ -106,7 +107,7 @@ if __name__ == "__main__":
     img_file_path = os.path.join(
         os.path.join(cur_dir, "image/test_hydration_energy.png")
     )
-    ion, target = "pot", "hydrogen"
+    ion, target = "pot", "oxygen"
     pore_file_path = os.path.join(out_dir, "%s-pore.json" % target)
     ion_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
 
