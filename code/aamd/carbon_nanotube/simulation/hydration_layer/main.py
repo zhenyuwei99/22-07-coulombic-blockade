@@ -61,13 +61,13 @@ def generate_simulation_recipe(center_ion_type, center_coordinate):
                 },
                 {
                     "name": "sample_nvt_with_fixed_ion",
-                    "num_steps": 10000000,
+                    "num_steps": 25000000,
                     "step_size": Quantity(1.0, femtosecond),
                     "temperature": Quantity(300, kelvin),
                     "center_ion_type": center_ion_type,
                     "center_coordinate": center_coordinate,
                     "out_prefix": "04-sample",
-                    "out_freq": 10000,
+                    "out_freq": 5000,
                 },
             ]
         )
@@ -84,11 +84,11 @@ def generate_simulation_recipe(center_ion_type, center_coordinate):
                 },
                 {
                     "name": "sample_nvt",
-                    "num_steps": 10000000,
+                    "num_steps": 25000000,
                     "step_size": Quantity(1.0, femtosecond),
                     "temperature": Quantity(300, kelvin),
                     "out_prefix": "04-sample",
-                    "out_freq": 10000,
+                    "out_freq": 5000,
                 },
             ]
         )
@@ -154,8 +154,10 @@ if __name__ == "__main__":
     out_dir = os.path.join(CUR_DIR, "out")
     job_args = []
     channel_r0_list = [
-        Quantity(i * CC_BOND_LENGTH * 3 / (2 * np.pi), angstrom) for i in range(8, 20)
+        Quantity(i * CC_BOND_LENGTH * 3 / (2 * np.pi), angstrom)
+        for i in range(9, 20)[::2]
     ]
+    print(channel_r0_list)
     # Job for ion in bulk
     r0_list = [Quantity(2, angstrom)]
     l0_list = [Quantity(0, angstrom)]
@@ -191,8 +193,8 @@ if __name__ == "__main__":
     center_ion_type_list = ["POT", "CLA"]
     center_coordinate_list = [
         [0.0, 0.0, 0.0],
+        [0.0, 0.0, 30.0],
         [0.0, 0.0, 25.0],
-        [0.0, 0.0, 20.0],
         [0.0, 0.0, 20.0],
     ]
     job_args.extend(
@@ -218,20 +220,20 @@ if __name__ == "__main__":
     ]
     center_ion_type_list = ["WATER"]
     center_coordinate_list = [[0.0, 0.0, 0.0]]
-    job_args.extend(
-        list(
-            product(
-                r0_list,
-                l0_list,
-                w0_list,
-                ls_list,
-                ions_list,
-                wall_charges_list,
-                center_ion_type_list,
-                center_coordinate_list,
-            )
-        )
-    )
+    # job_args.extend(
+    #     list(
+    #         product(
+    #             r0_list,
+    #             l0_list,
+    #             w0_list,
+    #             ls_list,
+    #             ions_list,
+    #             wall_charges_list,
+    #             center_ion_type_list,
+    #             center_coordinate_list,
+    #         )
+    #     )
+    # )
     # Job for water in channel
     r0_list = channel_r0_list
     l0_list = [Quantity(50, angstrom)]

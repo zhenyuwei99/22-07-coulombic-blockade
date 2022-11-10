@@ -79,7 +79,7 @@ class PlaneRDFAnalyser:
             Quantity(1.014, kilogram / decimeter**3)
             / Quantity(18, dalton)
             * Quantity(1, angstrom**3)
-        ).value
+        ).value * 2
         mean_hist /= factor
         std_hist /= factor
         mean_hist[0], std_hist[0] = (
@@ -145,9 +145,14 @@ class PlaneRDFAnalyser:
 def job(target_dir: str, npt_prefix: str, sample_prefix: str):
     selection_condition = [
         {
-            "particle name": [["OH2"]],
+            "particle name": [["H1", "H2"]],
         }
     ]
+    # selection_condition = [
+    #     {
+    #         "particle name": [["OH2"]],
+    #     }
+    # ]
     center_coordinate_list = [np.zeros(3)]
     if not "water" in target_dir:
         center_coordinate_list[0][2] = float(
@@ -156,7 +161,7 @@ def job(target_dir: str, npt_prefix: str, sample_prefix: str):
     else:
         center_coordinate_list.extend([np.array([0, 0, 25]), np.array([0, 0, 20])])
     for center_coordinate in center_coordinate_list:
-        name = "rdf-x-%.3fA-y-%.3fA-z-%.3fA" % (
+        name = "H-rdf-x-%.3fA-y-%.3fA-z-%.3fA" % (
             center_coordinate[0],
             center_coordinate[1],
             center_coordinate[2],
@@ -164,7 +169,7 @@ def job(target_dir: str, npt_prefix: str, sample_prefix: str):
         analyser = PlaneRDFAnalyser(
             center_coordinate=center_coordinate,
             selection_condition=selection_condition,
-            bin_width=0.5,
+            bin_width=0.2,
         )
         str_dir = os.path.join(target_dir, "str")
         npt_dir = os.path.join(target_dir, npt_prefix)
@@ -201,7 +206,7 @@ def job(target_dir: str, npt_prefix: str, sample_prefix: str):
 
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    out_dir = os.path.join(cur_dir, "out/no-wall-charge/")
+    out_dir = os.path.join(cur_dir, "out/no-wall-charge-short-time/")
     npt_prefix = "02-eq-npt"
     sample_prefix = "04-sample"
     target_dir_list = []
@@ -211,7 +216,7 @@ if __name__ == "__main__":
             [os.path.join(target_dir, i) for i in os.listdir(target_dir)]
         )
 
-    pool = mp.Pool(8)
+    pool = mp.Pool(12)
     for target_dir in target_dir_list:
         res_file_path = os.path.join(target_dir, "rdf.npz")
         pool.apply_async(
