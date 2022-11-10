@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 """
-file : hydration_energy.py
+file : test_hydration_energy.py
 created time : 2022/11/08
 author : Zhenyu Wei
 version : 1.0
@@ -20,6 +20,9 @@ if __name__ == "__main__":
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(cur_dir, "out")
+    img_file_path = os.path.join(
+        os.path.join(cur_dir, "image/test_hydration_energy.png")
+    )
     ion, target = "cla", "oxygen"
     pore_file_path = os.path.join(out_dir, "%s-pore.json" % target)
     ion_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
@@ -65,4 +68,5 @@ if __name__ == "__main__":
             slice(10, -10),
         )
         ax.plot(z[target_slice], res[target_slice])
-    plt.show()
+    fig.tight_layout()
+    fig.savefig(img_file_path)
