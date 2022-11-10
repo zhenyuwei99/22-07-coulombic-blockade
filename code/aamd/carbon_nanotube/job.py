@@ -104,7 +104,7 @@ def generate_json(
     }
     # Generate file
     str_dict = job_dict["str"]
-    if False:
+    if True:
         # Suspend in distribute mode
         structure_name, pdb_file_path, psf_file_path = generate_structure(
             r0=Quantity(str_dict["r0"], angstrom),
