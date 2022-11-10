@@ -34,18 +34,25 @@ class HydrationDistributionFunction:
 
     def add_layer(self, height, r0, sigma):
         layer = lambda r: height * np.exp(-((r - r0) ** 2) / (2 * sigma**2))
+        layer_name = "layer-%d" % self._cur_num_layers
         self._model_list.append(layer)
-        self._model_dict["layer-%d" % self._cur_num_layers] = {
+        self._model_dict[layer_name] = {
             "height": height,
             "r0": r0,
             "sigma": sigma,
         }
+        layer_name = "layer_%d" % self._cur_num_layers
+        setattr(self, layer_name + "_height", r0)
+        setattr(self, layer_name + "_r0", r0)
+        setattr(self, layer_name + "_sigma", sigma)
         self._cur_num_layers += 1
 
     def add_bulk(self, rb, alpha):
         bulk = lambda r: 1 / (1 + np.exp(-alpha * (r - rb)))
         self._model_list.append(bulk)
         self._model_dict["bulk"] = {"rb": rb, "alpha": alpha}
+        setattr(self, "bulk_rb", rb)
+        setattr(self, "bulk_alpha", alpha)
         self._cur_num_bulks += 1
 
     def __call__(self, distance):

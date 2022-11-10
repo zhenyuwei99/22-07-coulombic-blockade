@@ -30,6 +30,20 @@ def get_ion(x, y, z, r0):
     return np.sqrt(x**2 + y**2 + z**2) - r0
 
 
+def get_fft(pore_energy, ion_energy):
+    f = np.ones([pore_energy.shape[i] + ion_energy.shape[i] - 1 for i in range(3)])
+    center_slice = [
+        slice(ion_energy.shape[i] // 2, ion_energy.shape[i] // 2 + pore_energy.shape[i])
+        for i in range(3)
+    ]
+    f[tuple(center_slice)] = pore_energy.copy()
+    # f = pore_energy.copy()
+    g = ion_energy * np.log(ion_energy)
+    g = (Quantity(300 * g, kelvin) * KB).convert_to(kilocalorie_permol).value
+
+    return signal.fftconvolve(f, g, "valid") * bin_width**3
+
+
 if __name__ == "__main__":
     import os
 
@@ -54,9 +68,7 @@ if __name__ == "__main__":
     ion_bulk = get_ion(x, y, z, r0=0.7)
     ion_energy += 1 / (1 + np.exp(-10 * ion_bulk))
 
-    f = pore_energy.copy()
-    g = ion_energy * np.log(ion_energy)
-    g = (Quantity(300 * g, kelvin) * KB).convert_to(kilocalorie_permol).value
+    res = get_fft(pore_energy, ion_energy)
 
     half_index = x.shape[1] // 2
     target_slice = (
@@ -64,7 +76,6 @@ if __name__ == "__main__":
         half_index,
         slice(None, None),
     )
-    res = signal.fftconvolve(f, g, "same") * bin_width**3
 
     fig, ax = plt.subplots(1, 1)
     c = ax.contourf(x[target_slice], z[target_slice], res[target_slice], 100)
