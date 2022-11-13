@@ -14,7 +14,7 @@ import numpy as np
 
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    out_dir = os.path.join(cur_dir, "out")
+    out_dir = os.path.join(cur_dir, "../out")
     out_file_path = os.path.join(out_dir, "pore_geometry.xyz")
     x, y, z = np.meshgrid(
         np.arange(-5, 5, 0.1), np.arange(-5, 5, 0.1), np.arange(-5, 5, 0.1)

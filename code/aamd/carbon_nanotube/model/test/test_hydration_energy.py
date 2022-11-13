@@ -10,10 +10,14 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
 import os
+import sys
 import numpy as np
 from scipy import signal
 from mdpy.unit import *
 from mdpy.utils import check_quantity_value, check_quantity
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from hydration import *
 from utils import *
 
@@ -103,9 +107,9 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    out_dir = os.path.join(cur_dir, "out")
+    out_dir = os.path.join(cur_dir, "../out")
     img_file_path = os.path.join(
-        os.path.join(cur_dir, "image/test_hydration_energy.png")
+        os.path.join(cur_dir, "../image/test_hydration_energy.png")
     )
 
     sigma = Quantity(1.992 * 2 ** (5 / 6), angstrom)
@@ -192,4 +196,4 @@ if __name__ == "__main__":
         )
         ax.plot(z[target_slice], potential[target_slice])
     fig.tight_layout()
-    fig.savefig(img_file_path)
+    # fig.savefig(img_file_path)
