@@ -109,7 +109,7 @@ if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(cur_dir, "../out")
     img_file_path = os.path.join(
-        os.path.join(cur_dir, "../image/test_hydration_energy.png")
+        os.path.join(out_dir, "image/test_hydration_energy.png")
     )
 
     sigma = Quantity(1.992 * 2 ** (5 / 6), angstrom)

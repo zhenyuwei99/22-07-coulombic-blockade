@@ -33,7 +33,9 @@ if __name__ == "__main__":
     import os
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    img_file_path = os.path.join(os.path.join(cur_dir, "../image/test_pore_distance.png"))
+    img_file_path = os.path.join(
+        os.path.join(cur_dir, "../out/image/test_pore_distance.png")
+    )
     bin_width = 0.1
     x, y, z = np.meshgrid(
         np.arange(-7.5, 7.5, bin_width),
