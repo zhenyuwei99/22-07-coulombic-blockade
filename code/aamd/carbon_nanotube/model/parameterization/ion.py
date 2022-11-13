@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 """
-file : parameterization_pore.py
+file : ion.py
 created time : 2022/11/07
 author : Zhenyu Wei
 version : 1.0
@@ -9,25 +9,15 @@ contact : zhenyuwei99@gmail.com
 copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
+import os
+import sys
 import numpy as np
 import mdpy as md
 from scipy import optimize
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from hydration import HydrationDistributionFunction
-
-
-def get_pore_distance(r, z, r0, z0, threshold=0.3):
-    dist = np.zeros_like(r)
-    z_abs = np.abs(z)
-    area1 = (z_abs < z0) & (r < r0)
-    area2 = (r > r0) & (z_abs > z0)
-    area3 = (z_abs >= z0) & (r <= r0)
-
-    dist[area1] = r0 - r[area1]
-    dist[area2] = z_abs[area2] - z0
-    dist[area3] = np.sqrt((z_abs[area3] - z0) ** 2 + (r[area3] - r0) ** 2)
-    dist[dist <= threshold] = threshold
-
-    return dist
 
 
 def predict(distance, h0, r0, sigma0, h1, r1, sigma1, rb, alpha):
@@ -52,17 +42,17 @@ def fit(distance, ref, out_file_path: str = None):
     opt_res = optimize.dual_annealing(
         loss,
         bounds=[
+            (0.5, 10),
             (1, 10),
-            (1e-5, 10),
-            (1e-5, 20),
+            (0.01, 2),
+            (0.5, 10),
             (1, 10),
-            (1e-5, 10),
-            (1e-5, 20),
-            (1, 20),
-            (2, 10),
+            (0.01, 2),
+            (1, 10),
+            (1, 50),
         ],
         args=([distance, ref],),
-        # maxiter=2000,
+        maxiter=2000,
         callback=print,
     )
     print(opt_res)
@@ -79,42 +69,47 @@ def save(json_file_path, params):
 
 
 if __name__ == "__main__":
-    import os
     import matplotlib
     import matplotlib.pyplot as plt
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    out_dir = os.path.join(cur_dir, "out")
+    out_dir = os.path.join(cur_dir, "../out")
     img_file_path = os.path.join(
-        os.path.join(cur_dir, "image/parameterization_pore.png")
+        os.path.join(cur_dir, "../image/parameterization_ion.png")
     )
-    target = "oxygen"
-    json_file_path = os.path.join(out_dir, "%s-pore.json" % target)
+    ion, target = "pot", "hydrogen"
+    json_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
 
-    r0 = 12.864
+    data_dir = os.path.join(
+        cur_dir, "../../simulation/hydration_layer/out/no-wall-charge-short-time"
+    )
     result = md.analyser.load_analyser_result(
-        "/home/zhenyuwei/simulation_data/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/no-wall-charge-short-time/pore-r0-%.3fA-w0-50.000A-l0-50.000A-ls-25.000A-no-ion/water/%s-rdf-x-0.000A-y-0.000A-z-0.000A.npz"
-        % (r0, "O" if target == "oxygen" else "H")
+        os.path.join(
+            data_dir,
+            "pore-r0-%.3fA-w0-50.000A-l0-50.000A-ls-25.000A-no-ion/water/%s-rdf-x-0.000A-y-0.000A-z-0.000A.npz"
+            % (ion, "O" if target == "oxygen" else "H"),
+        )
     )
     r = result.data["r_edge"][1:, 1:]
     z = result.data["z_edge"][1:, 1:]
-    distance = get_pore_distance(r, z, r0=r0, z0=20)
+    distance = np.sqrt(r**2 + z**2)
     ref = result.data["mean"]
-    if not True:
+    if True:
         params = fit(distance, ref)
     else:
         params = np.array(
             [
-                2.69999451,
-                3.24431883,
-                0.37690082,
-                1.32545303,
-                6.27418568,
-                1.08139906,
-                8.10905841,
-                3.74497218,
+                1.99619479,
+                3.37346157,
+                0.30790685,
+                1.0,
+                5.55019423,
+                1.11430823,
+                7.2341728,
+                1.7052947,
             ]
         )
+
     save(json_file_path, params)
     pred = predict(distance, *params)
     fig, ax = plt.subplots(1, 2, figsize=[16, 9])
