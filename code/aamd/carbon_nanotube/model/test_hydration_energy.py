@@ -107,20 +107,19 @@ if __name__ == "__main__":
     img_file_path = os.path.join(
         os.path.join(cur_dir, "image/test_hydration_energy.png")
     )
-    ion, target = "pot", "oxygen"
-    pore_file_path = os.path.join(out_dir, "%s-pore.json" % target)
-    ion_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
 
     sigma = Quantity(1.992 * 2 ** (5 / 6), angstrom)
     epsilon = Quantity(0.070, kilocalorie_permol)
-    r0 = Quantity(20, angstrom)
+    r0 = Quantity(10, angstrom)
     z0 = Quantity(5, angstrom)
     n0 = Quantity(1.014, kilogram / decimeter**3) / Quantity(18, dalton)
-    if target == "hydrogen":
-        n0 *= Quantity(2)
-    bin_width = 0.25
+    bin_width = 0.5
     bin_range = np.array([[-25.0, 25], [-25, 25], [-25, 25]])
-    x, y, z, hydration_potential = get_hydration_potential(
+
+    ion, target = "cla", "oxygen"
+    pore_file_path = os.path.join(out_dir, "%s-pore.json" % target)
+    ion_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
+    x, y, z, hydration_potential_oxygen = get_hydration_potential(
         r0=r0,
         z0=z0,
         n0=n0,
@@ -129,18 +128,44 @@ if __name__ == "__main__":
         pore_file_path=pore_file_path,
         ion_file_path=ion_file_path,
     )
-    x, y, z, nonpolar_potential = get_nonpolar_potential(
-        sigma=sigma,
-        epsilon=epsilon,
+    target = "hydrogen"
+    pore_file_path = os.path.join(out_dir, "%s-pore.json" % target)
+    ion_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
+    n0 *= Quantity(2)
+    x, y, z, hydration_potential_hydrogen = get_hydration_potential(
         r0=r0,
         z0=z0,
         n0=n0,
         bin_range=bin_range,
         bin_width=bin_width,
+        pore_file_path=pore_file_path,
+        ion_file_path=ion_file_path,
     )
-    potential = hydration_potential + nonpolar_potential
+    hydration_potential = hydration_potential_oxygen + hydration_potential_hydrogen
+    if True:
+        x, y, z, nonpolar_potential = get_nonpolar_potential(
+            sigma=sigma,
+            epsilon=epsilon,
+            r0=r0,
+            z0=z0,
+            n0=n0,
+            bin_range=bin_range,
+            bin_width=bin_width,
+        )
+        potential = hydration_potential + nonpolar_potential
+    else:
+        r = np.sqrt((x - r0.value) ** 2 + y**2 + z**2)
+        factor = Quantity(r * 4 * np.pi * 80, angstrom) * EPSILON0
+        potential = (
+            (Quantity(1, elementary_charge**2) / factor)
+            .convert_to(kilocalorie_permol)
+            .value
+        )
+        potential += hydration_potential
+    pore_distance = get_pore_distance(x, y, z, r0=r0.value, z0=z0.value, threshold=0)
+    potential += (pore_distance == 0).astype(np.float64) * 100
     potential[potential >= 5] = 5
-    fig, ax = plt.subplots(1, 1)
+    fig, ax = plt.subplots(1, 1, figsize=[12, 8])
     half_index = x.shape[1] // 2
     if True:
         target_slice = (
@@ -149,6 +174,15 @@ if __name__ == "__main__":
             slice(None, None),
         )
         c = ax.contourf(x[target_slice], z[target_slice], potential[target_slice], 200)
+        Ex, Ez = np.gradient(-potential[target_slice])
+        ax.streamplot(
+            x[:, 0, 0],
+            z[0, 0, :],
+            Ex.T,
+            Ez.T,
+            linewidth=1,
+            density=1.5,
+        )
         fig.colorbar(c)
     else:
         target_slice = (
