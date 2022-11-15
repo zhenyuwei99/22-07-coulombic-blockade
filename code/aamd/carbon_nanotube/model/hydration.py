@@ -83,7 +83,7 @@ class HydrationDistributionFunction:
         self._check_function()
 
 
-def get_pore_distance(x, y, z, r0, z0, thickness):
+def get_pore_distance(x, y, z, r0, z0, thickness=1):
     # Area illustration
     #       |
     #   2   |   3 Pore-bulk
