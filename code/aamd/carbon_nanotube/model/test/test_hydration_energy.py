@@ -117,10 +117,10 @@ if __name__ == "__main__":
     r0 = Quantity(10, angstrom)
     z0 = Quantity(5, angstrom)
     n0 = Quantity(1.014, kilogram / decimeter**3) / Quantity(18, dalton)
-    bin_width = 0.5
+    bin_width = 0.25
     bin_range = np.array([[-25.0, 25], [-25, 25], [-25, 25]])
 
-    ion, target = "cla", "oxygen"
+    ion, target = "pot", "oxygen"
     pore_file_path = os.path.join(out_dir, "%s-pore.json" % target)
     ion_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
     x, y, z, hydration_potential_oxygen = get_hydration_potential(
@@ -158,10 +158,11 @@ if __name__ == "__main__":
         )
         potential = hydration_potential + nonpolar_potential
     else:
-        r = np.sqrt((x - r0.value) ** 2 + y**2 + z**2)
+        r = np.sqrt(x**2 + y**2 + z**2)
+        r[r <= 0.1] = 0.1
         factor = Quantity(r * 4 * np.pi * 80, angstrom) * EPSILON0
         potential = (
-            (Quantity(1, elementary_charge**2) / factor)
+            (Quantity(-1, elementary_charge**2) / factor)
             .convert_to(kilocalorie_permol)
             .value
         )
@@ -179,14 +180,14 @@ if __name__ == "__main__":
         )
         c = ax.contourf(x[target_slice], z[target_slice], potential[target_slice], 200)
         Ex, Ez = np.gradient(-potential[target_slice])
-        ax.streamplot(
-            x[:, 0, 0],
-            z[0, 0, :],
-            Ex.T,
-            Ez.T,
-            linewidth=1,
-            density=1.5,
-        )
+        # ax.streamplot(
+        #     x[:, 0, 0],
+        #     z[0, 0, :],
+        #     Ex.T,
+        #     Ez.T,
+        #     linewidth=1,
+        #     density=1.5,
+        # )
         fig.colorbar(c)
     else:
         target_slice = (
@@ -196,4 +197,5 @@ if __name__ == "__main__":
         )
         ax.plot(z[target_slice], potential[target_slice])
     fig.tight_layout()
+    plt.show()
     # fig.savefig(img_file_path)
