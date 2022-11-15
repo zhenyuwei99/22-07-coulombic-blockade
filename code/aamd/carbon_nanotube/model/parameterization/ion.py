@@ -34,7 +34,7 @@ def loss(params, args):
     pred = predict(distance, h0, r0, sigma0, h1, r1, sigma1, rb, alpha)
     error = (((pred - ref) ** 2) * np.abs(ref - 1)).mean()
     error += r0 > r1
-    error += r1 > rb
+    # error += r1 > rb
     return error
 
 
@@ -42,17 +42,17 @@ def fit(distance, ref, out_file_path: str = None):
     opt_res = optimize.dual_annealing(
         loss,
         bounds=[
-            (0.5, 10),
+            (1, 10),
             (1, 10),
             (0.01, 2),
-            (0.5, 10),
+            (1, 10),
             (1, 10),
             (0.01, 2),
             (1, 10),
             (1, 50),
         ],
         args=([distance, ref],),
-        maxiter=2000,
+        # maxiter=2000,
         callback=print,
     )
     print(opt_res)
@@ -81,12 +81,12 @@ if __name__ == "__main__":
     json_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
 
     data_dir = os.path.join(
-        cur_dir, "../../simulation/hydration_layer/out/no-wall-charge-short-time"
+        cur_dir, "../../simulation/hydration_layer/out/no-wall-charge"
     )
     result = md.analyser.load_analyser_result(
         os.path.join(
             data_dir,
-            "pore-r0-%.3fA-w0-50.000A-l0-50.000A-ls-25.000A-no-ion/water/%s-rdf-x-0.000A-y-0.000A-z-0.000A.npz"
+            "no-pore-w0-2.000A-ls-25.000A-POT-1.00e-01molPerL/%s-x-0.00A-y-0.00A-z-0.00A/%s-rdf-x-0.000A-y-0.000A-z-0.000A.npz"
             % (ion, "O" if target == "oxygen" else "H"),
         )
     )
@@ -94,19 +94,19 @@ if __name__ == "__main__":
     z = result.data["z_edge"][1:, 1:]
     distance = np.sqrt(r**2 + z**2)
     ref = result.data["mean"]
-    if True:
+    if not True:
         params = fit(distance, ref)
     else:
         params = np.array(
             [
-                1.99619479,
-                3.37346157,
-                0.30790685,
+                1.98562457,
+                3.37300329,
+                0.30623942,
                 1.0,
-                5.55019423,
-                1.11430823,
-                7.2341728,
-                1.7052947,
+                5.5837951,
+                1.15535722,
+                7.33184982,
+                1.73896151,
             ]
         )
 
@@ -124,5 +124,5 @@ if __name__ == "__main__":
         half_index = ref.shape[1] // 2
         ax[0].plot(r[:, 1], ref[:, half_index])
         ax[1].plot(r[:, 1], pred[:, half_index])
-    fig.tight_layout()
+    plt.show()
     fig.savefig(img_file_path)

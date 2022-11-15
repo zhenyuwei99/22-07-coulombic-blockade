@@ -98,7 +98,7 @@ def get_nonpolar_potential(
         indexing="ij",
     )
     pore_distance = get_pore_distance(x, y, z, r0=r0, z0=z0)
-    relative_distance = (sigma / pore_distance) ** 6
+    relative_distance = (sigma / (pore_distance + 0.01)) ** 6
     potential = 4 * epsilon * (relative_distance**2 - relative_distance)
     return x, y, z, potential
 
@@ -167,7 +167,7 @@ if __name__ == "__main__":
             .value
         )
         potential += hydration_potential
-    pore_distance = get_pore_distance(x, y, z, r0=r0.value, z0=z0.value, threshold=0)
+    pore_distance = get_pore_distance(x, y, z, r0=r0.value, z0=z0.value)
     potential += (pore_distance == 0).astype(np.float64) * 100
     potential[potential >= 5] = 5
     fig, ax = plt.subplots(1, 1, figsize=[12, 8])
