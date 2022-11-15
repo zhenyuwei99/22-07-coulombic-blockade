@@ -83,7 +83,7 @@ class HydrationDistributionFunction:
         self._check_function()
 
 
-def get_pore_distance(x, y, z, r0, z0, threshold=0.5):
+def get_pore_distance(x, y, z, r0, z0, thickness):
     # Area illustration
     #       |
     #   2   |   3 Pore-bulk
@@ -101,6 +101,8 @@ def get_pore_distance(x, y, z, r0, z0, threshold=0.5):
     else:
         raise KeyError("np.ndarray or cp.ndarray required, while %s provided" % type(x))
 
+    r0 += thickness
+    z0 -= thickness
     dist = pak.zeros_like(x)
     r = pak.sqrt(x**2 + y**2)
     z_abs = pak.abs(z)
@@ -111,7 +113,8 @@ def get_pore_distance(x, y, z, r0, z0, threshold=0.5):
     dist[area1] = r0 - r[area1]
     dist[area2] = z_abs[area2] - z0
     dist[area3] = pak.sqrt((z_abs[area3] - z0) ** 2 + (r[area3] - r0) ** 2)
-    dist[dist <= threshold] = threshold
+    dist -= thickness
+    dist[dist <= 0] = 0
 
     return dist
 
