@@ -23,7 +23,9 @@ from hydration import get_pore_distance
 
 class PESolver:
     def __init__(self, grid: Grid) -> None:
-        """Field:
+        """All grid and constant in default unit
+
+        Field:
         - phi: Electric potential
         - epsilon: Relative permittivity
         - rho: charge density
