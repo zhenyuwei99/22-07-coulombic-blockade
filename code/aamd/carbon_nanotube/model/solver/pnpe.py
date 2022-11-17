@@ -235,7 +235,7 @@ class PNPESolver:
         potential_grad = cp.zeros(
             [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
         )
-        potential = self._grid.field.phi * val_ion + vdw_ion
+        potential = self._grid.field.phi * val_ion #+ vdw_ion
         ## X Neumann condition
         potential_grad[0, 0, :-1, :, :] = potential[2:-1, 1:-1, 1:-1]
         potential_grad[0, 0, -1, :, :] = (
@@ -353,7 +353,7 @@ class PNPESolver:
                     num_iterations=25,
                 )
             if i % 250 == 0:
-                visualize_result(grid, i)
+                visualize_result(self._grid, i)
 
     @property
     def grid(self) -> Grid:
@@ -445,7 +445,7 @@ def visualize_result(grid: Grid, iteration):
     num_levels = 100
     x = grid.coordinate.x[target_slice].get()
     z = grid.coordinate.z[target_slice].get()
-    c1 = ax[0].contour(x, z, phi, num_levels)
+    c1 = ax[0].contourf(x, z, phi, num_levels)
     ax[0].set_title("Electric Potential", fontsize=big_font)
     ax[0].set_xlabel(r"x ($\AA$)", fontsize=big_font)
     ax[0].set_ylabel(r"z ($\AA$)", fontsize=big_font)
@@ -453,11 +453,11 @@ def visualize_result(grid: Grid, iteration):
 
     rho = np.stack([rho_k, rho_cl])
     norm = matplotlib.colors.Normalize(vmin=rho.min(), vmax=rho.max())
-    c2 = ax[1].contour(x, z, rho_k, num_levels, norm=norm)
+    c2 = ax[1].contourf(x, z, rho_k, num_levels, norm=norm)
     ax[1].set_title("POT density", fontsize=big_font)
     ax[1].set_xlabel(r"x ($\AA$)", fontsize=big_font)
     ax[1].tick_params(labelsize=mid_font)
-    c3 = ax[2].contour(x, z, rho_cl, num_levels, norm=norm)
+    c3 = ax[2].contourf(x, z, rho_cl, num_levels, norm=norm)
     ax[2].set_title("CLA density", fontsize=big_font)
     ax[2].set_xlabel(r"x ($\AA$)", fontsize=big_font)
     ax[2].tick_params(labelsize=mid_font)
@@ -479,11 +479,11 @@ if __name__ == "__main__":
 
     # Prefactor
     temperature = 300  # kelvin
-    r0 = 8.8
+    r0 = 10
     z0 = 10
     thickness = 3.0
     rho_bulk = Quantity(0.15, mol / decimeter**3)
-    grid_width = 0.5
+    grid_width = 0.25
     grid_range = np.array([[-20, 20], [-20, 20], [-20, 20]])
     # Create grid
     grid = Grid(
