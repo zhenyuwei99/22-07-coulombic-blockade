@@ -43,7 +43,7 @@ class HydrationDistributionFunction:
             "sigma": sigma,
         }
         layer_name = "layer_%d" % self._cur_num_layers
-        setattr(self, layer_name + "_height", r0)
+        setattr(self, layer_name + "_height", height)
         setattr(self, layer_name + "_r0", r0)
         setattr(self, layer_name + "_sigma", sigma)
         self._cur_num_layers += 1
