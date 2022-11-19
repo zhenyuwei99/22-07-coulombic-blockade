@@ -77,7 +77,7 @@ if __name__ == "__main__":
     img_file_path = os.path.join(
         os.path.join(out_dir, "image/parameterization_ion.png")
     )
-    ion, target = "pot", "hydrogen"
+    ion, target = "pot", "oxygen"
     json_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
 
     data_dir = os.path.join(
@@ -94,19 +94,20 @@ if __name__ == "__main__":
     z = result.data["z_edge"][1:, 1:]
     distance = np.sqrt(r**2 + z**2)
     ref = result.data["mean"]
-    if not True:
+    if True:
         params = fit(distance, ref)
     else:
+        g = HydrationDistributionFunction(json_file_path=json_file_path)
         params = np.array(
             [
-                1.98562457,
-                3.37300329,
-                0.30623942,
-                1.0,
-                5.5837951,
-                1.15535722,
-                7.33184982,
-                1.73896151,
+                g.layer_0_height,
+                g.layer_0_r0,
+                g.layer_0_sigma,
+                g.layer_1_height,
+                g.layer_1_r0,
+                g.layer_1_sigma,
+                g.bulk_alpha,
+                g.bulk_rb
             ]
         )
 
