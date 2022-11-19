@@ -304,10 +304,9 @@ class Distributor:
             )
             try:
                 process = os.popen(command)
-                exe_output = process.read()
+                exe_output += process.read()
                 process.close()
             except:
-                print("Here")
                 exe_output += "Failed"
             data = json.dumps(job_dict, sort_keys=True, indent=4)
             data = data.encode("utf-8").decode("unicode_escape")
@@ -419,15 +418,15 @@ if __name__ == "__main__":
         num_devices=3,
         num_jobs_per_device=1,
     )
-    distributor.register_device(
-        label="3080",
-        address="zhenyuwei@10.203.154.9",
-        root_dir="~/Documents/sim-distribute",
-        python_exe="/home/zhenyuwei/Programs/anaconda3/envs/mdpy-dev/bin/python",
-        vmd_bin="/home/zhenyuwei/Programs/vmd/bin",
-        num_devices=1,
-        num_jobs_per_device=1,
-    )
+    # distributor.register_device(
+    #     label="3080",
+    #     address="zhenyuwei@10.203.154.9",
+    #     root_dir="~/Documents/sim-distribute",
+    #     python_exe="/home/zhenyuwei/Programs/anaconda3/envs/mdpy-dev/bin/python",
+    #     vmd_bin="/home/zhenyuwei/Programs/vmd/bin",
+    #     num_devices=1,
+    #     num_jobs_per_device=1,
+    # )
     # Test
     if False:
         status = load_status(distributor.status_file_path)

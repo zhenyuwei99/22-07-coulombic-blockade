@@ -548,8 +548,9 @@ class Simulator:
             temperature * unit.kelvin, LANGEVIN_FACTOR, step_size * unit.femtosecond
         )
 
-        ion_position_file_path = os.path.join(self._out_dir, out_freq + ".ion")
-        anti_ion_type = ["CA", "H1", "H2", "OH1"]
+        ion_position_file_path = os.path.join(out_dir, out_prefix + ".ion")
+        open(ion_position_file_path, "w").close()
+        anti_ion_type = ["CA", "O", "H1", "H2"]
         atom_index, atom_name = [], []
         for index, atom in enumerate(self._psf.topology.atoms()):
             if not atom.name in anti_ion_type:
