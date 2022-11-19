@@ -76,10 +76,10 @@ class HydrationDistributionFunction:
         for key, value in model_dict.items():
             if "layer" in key:
                 self.add_layer(**value)
-            elif "bulk" in key:
+        for key, value in model_dict.items():
+            if "bulk" in key:
                 self.add_bulk(**value)
-            else:
-                raise KeyError("Only layer and bulk supported")
+        self._num_layers = self._cur_num_layers
         self._check_function()
 
 
