@@ -15,7 +15,13 @@ import numpy as np
 from itertools import product
 from mdpy.unit import *
 from mdpy.utils import *
-from main import *
+
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+CODE_DIR = os.path.join(CUR_DIR, "../..")
+EXECUTION_FILE_PATH = os.path.join(CODE_DIR, "distributor.py")
+sys.path.append(CODE_DIR)
+from job import generate_json
+from str.generator import CC_BOND_LENGTH
 
 
 def generate_simulation_recipe():
@@ -51,7 +57,7 @@ def generate_simulation_recipe():
     return simulation_recipe
 
 
-def generate_json_file_path(out_dir, r0, w0, l0, ls, ions):
+def generate_json_file_path(out_dir, r0, w0, l0, ls, ions, index=0):
     ion_name = "-".join(
         [
             "%s-%.2emolPerL"
@@ -77,7 +83,7 @@ def generate_json_file_path(out_dir, r0, w0, l0, ls, ions):
     return os.path.join(
         out_dir,
         "no-wall-charge-long-time",
-        str_name + "-" + ion_name,
+        str_name + "-" + ion_name + "-" + str(index),
         "job.json",
     )
 
@@ -96,18 +102,6 @@ if __name__ == "__main__":
         {"POT": Quantity(0.1, mol / decimeter**3)},
     ]
     wall_charges_list = [[]]
-    job_args.extend(
-        list(
-            product(
-                r0_list,
-                l0_list,
-                w0_list,
-                ls_list,
-                ions_list,
-                wall_charges_list,
-            )
-        )
-    )
     # Job for water in channel
     r0_list = channel_r0_list
     l0_list = [Quantity(50, angstrom)]
@@ -134,25 +128,21 @@ if __name__ == "__main__":
         ions,
         wall_charges,
     ) in job_args:
-        json_file_path = generate_json_file_path(
-            out_dir=out_dir,
-            r0=r0,
-            l0=l0,
-            w0=w0,
-            ls=ls,
-            ions=ions,
-        )
-        json_file_path_list.append(
-            generate_json(
-                json_file_path=json_file_path,
-                r0=r0,
-                l0=l0,
-                w0=w0,
-                ls=ls,
-                wall_charges=wall_charges,
-                ions=ions,
-                simulation_recipes=generate_simulation_recipe(),
+        for i in range(6):
+            json_file_path = generate_json_file_path(
+                out_dir=out_dir, r0=r0, l0=l0, w0=w0, ls=ls, ions=ions, index=i
             )
-        )
+            json_file_path_list.append(
+                generate_json(
+                    json_file_path=json_file_path,
+                    r0=r0,
+                    l0=l0,
+                    w0=w0,
+                    ls=ls,
+                    wall_charges=wall_charges,
+                    ions=ions,
+                    simulation_recipes=generate_simulation_recipe(),
+                )
+            )
     command = "python %s %s" % (EXECUTION_FILE_PATH, " ".join(json_file_path_list))
     # os.system(command)
