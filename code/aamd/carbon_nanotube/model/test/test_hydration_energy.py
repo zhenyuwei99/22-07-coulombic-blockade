@@ -120,7 +120,8 @@ if __name__ == "__main__":
     bin_width = 0.25
     bin_range = np.array([[-25.0, 25], [-25, 25], [-25, 25]])
 
-    ion, target = "pot", "oxygen"
+    ion = "pot"
+    target = "oxygen"
     pore_file_path = os.path.join(out_dir, "%s-pore.json" % target)
     ion_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
     x, y, z, hydration_potential_oxygen = get_hydration_potential(
