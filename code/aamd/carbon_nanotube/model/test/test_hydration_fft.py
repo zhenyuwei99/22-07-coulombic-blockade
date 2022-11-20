@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 """
-file : test_fft.py
+file : test_hydration_fft.py
 created time : 2022/11/06
 author : Zhenyu Wei
 version : 1.0
