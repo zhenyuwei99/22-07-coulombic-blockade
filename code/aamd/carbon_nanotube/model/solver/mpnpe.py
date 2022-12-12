@@ -13,6 +13,7 @@ import os
 import sys
 import numpy as np
 import cupy as cp
+import numba.cuda as cuda
 
 # import cupyx.scipy.signal as signal
 import scipy.signal as signal
@@ -26,6 +27,17 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hydration import *
 from pnpe import *
 from utils import *
+
+NP_DENSITY_UPPER_THRESHOLD = (
+    (Quantity(5, mol / decimeter**3) * NA)
+    .convert_to(1 / default_length_unit**3)
+    .value
+)
+NP_DENSITY_LOWER_THRESHOLD = (
+    (Quantity(0.001, mol / decimeter**3) * NA)
+    .convert_to(1 / default_length_unit**3)
+    .value
+)
 
 
 def visualize_result(grid: Grid, iteration):
@@ -41,7 +53,7 @@ def visualize_result(grid: Grid, iteration):
     )
     phi = (
         Quantity(
-            (grid.field.phi[target_slice] + grid.field.phi_s[target_slice]).get(),
+            (grid.field.phi[target_slice]).get(),
             default_energy_unit / default_charge_unit,
         )
         .convert_to(volt)
@@ -57,7 +69,7 @@ def visualize_result(grid: Grid, iteration):
         .convert_to(mol / decimeter**3)
         .value
     )
-    phi = rho_k + rho_cl
+    # phi = rho_k + rho_cl
 
     fig, ax = plt.subplots(1, 3, figsize=[25, 8])
     big_font = 20
@@ -254,14 +266,14 @@ class MPNPESolver:
         for ion_type in self._ion_types:
             r = getattr(self._grid.constant, "r_%s" % ion_type)
             v = CUPY_FLOAT(4 / 3 * np.pi * r**3)
-            # v = CUPY_FLOAT(r**3)
             phi_s -= (
                 v * getattr(self._grid.field, "rho_%s" % ion_type)[1:-1, 1:-1, 1:-1]
             )
-        phi_s[phi_s <= 1e-10] = 1e-10
+        phi_s[phi_s <= 1e-5] = 1e-5
         phi_s[phi_s >= 1] = 1
         phi_s = -cp.log(phi_s) / self.grid.constant.beta
-        self._grid.field.phi_s[1:-1, 1:-1, 1:-1] = phi_s.astype(CUPY_FLOAT)
+        phi_s = phi_s.astype(CUPY_FLOAT)
+        self._grid.field.phi_s[1:-1, 1:-1, 1:-1] = phi_s
         self_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
         target_slice = [slice(None, None) for i in range(self._grid.num_dimensions)]
         # Set boundary value
@@ -277,56 +289,65 @@ class MPNPESolver:
 
     def _get_phi_grad(self):
         phi_grad = cp.zeros(
-            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+            [
+                self._grid.num_dimensions,
+                self._grid.inner_shape[0] + 1,
+                self._grid.inner_shape[1] + 1,
+                self._grid.inner_shape[2] + 1,
+            ],
+            CUPY_FLOAT,
         )
-        ## X Neumann condition
-        phi_grad[0, 0, :-1, :, :] = self._grid.field.phi[2:-1, 1:-1, 1:-1]
-        phi_grad[0, 0, -1, :, :] = (
-            self._grid.field.phi[-2, 1:-1, 1:-1]
-            + self._grid.field.phi[-1, 1:-1, 1:-1] * self._grid.grid_width
+        # X Neumann condition
+        phi_grad[0, 1:-1, :-1, :-1] = (
+            self._grid.field.phi[2:-1, 1:-1, 1:-1]
+            - self._grid.field.phi[1:-2, 1:-1, 1:-1]
         )
-        phi_grad[0, 1, 1:, :, :] = self._grid.field.phi[1:-2, 1:-1, 1:-1]
-        phi_grad[0, 1, 0, :, :] = (
-            self._grid.field.phi[1, 1:-1, 1:-1]
-            - self._grid.field.phi[0, 1:-1, 1:-1] * self._grid.grid_width
+        phi_grad[0, 0, :-1, :-1] = self._grid.field.phi[0, 1:-1, 1:-1]
+        phi_grad[0, -1, :-1, :-1] = self._grid.field.phi[-1, 1:-1, 1:-1]
+        # Y Neumann
+        phi_grad[1, :-1, 1:-1, :-1] = (
+            self._grid.field.phi[1:-1, 2:-1, 1:-1]
+            - self._grid.field.phi[1:-1, 1:-2, 1:-1]
         )
-        ## Y Neumann
-        phi_grad[1, 0, :, :-1, :] = self._grid.field.phi[1:-1, 2:-1, 1:-1]
-        phi_grad[1, 0, :, -1, :] = (
-            self._grid.field.phi[1:-1, -2, 1:-1]
-            + self._grid.field.phi[1:-1, -1, 1:-1] * self._grid.grid_width
+        phi_grad[1, :-1, 0, :-1] = self._grid.field.phi[1:-1, 0, 1:-1]
+        phi_grad[1, :-1, -1, :-1] = self._grid.field.phi[1:-1, -1, 1:-1]
+        # Z Dirichlet
+        phi_grad[2, :-1, :-1, :] = (
+            self._grid.field.phi[1:-1, 1:-1, 1:] - self._grid.field.phi[1:-1, 1:-1, :-1]
         )
-        phi_grad[1, 1, :, 1:, :] = self._grid.field.phi[1:-1, 1:-2, 1:-1]
-        phi_grad[1, 1, :, 0, :] = (
-            self._grid.field.phi[1:-1, 1, 1:-1]
-            - self._grid.field.phi[1:-1, 0, 1:-1] * self._grid.grid_width
-        )
-        ## Z Dirichlet
-        phi_grad[2, 0] = self._grid.field.phi[1:-1, 1:-1, 2:]
-        phi_grad[2, 1] = self._grid.field.phi[1:-1, 1:-1, :-2]
-        phi_grad -= self._grid.field.phi[1:-1, 1:-1, 1:-1]
-        return phi_grad
+        phi_grad *= CUPY_FLOAT(self._grid.constant.beta)
+        return phi_grad.astype(CUPY_FLOAT)
 
     def _get_potential_grad(self, ion_type: str, phi_grad: cp.ndarray):
         val_ion = getattr(self._grid.constant, "val_%s" % ion_type)
         vdw_ion = getattr(self._grid.field, "vdw_%s" % ion_type)
         hyd_ion = getattr(self._grid.field, "hyd_%s" % ion_type)
         potential_grad = cp.zeros(
-            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+            [
+                self._grid.num_dimensions,
+                self._grid.inner_shape[0] + 1,
+                self._grid.inner_shape[1] + 1,
+                self._grid.inner_shape[2] + 1,
+            ],
+            CUPY_FLOAT,
         )
         # External potential
-        potential = hyd_ion + self._grid.field.phi_s + vdw_ion
-        potential_grad[0, 0] += potential[2:, 1:-1, 1:-1]
-        potential_grad[0, 1] += potential[:-2, 1:-1, 1:-1]
-        potential_grad[1, 0] += potential[1:-1, 2:, 1:-1]
-        potential_grad[1, 1] += potential[1:-1, :-2, 1:-1]
-        potential_grad[2, 0] += potential[1:-1, 1:-1, 2:]
-        potential_grad[2, 1] += potential[1:-1, 1:-1, :-2]
-        potential_grad -= potential[1:-1, 1:-1, 1:-1]
+        potential = hyd_ion + self._grid.field.phi_s  # + vdw_ion
+        potential_grad[0, :, :-1, :-1] = (
+            potential[1:, 1:-1, 1:-1] - potential[:-1, 1:-1, 1:-1]
+        )
+        potential_grad[1, :-1, :, :-1] = (
+            potential[1:-1, 1:, 1:-1] - potential[1:-1, :-1, 1:-1]
+        )
+        potential_grad[2, :-1, :-1, :] = (
+            potential[1:-1, 1:-1, 1:] - potential[1:-1, 1:-1, :-1]
+        )
+        potential_grad *= CUPY_FLOAT(self._grid.constant.beta)
         # Electrostatic potential
-        potential_grad += phi_grad * val_ion
-        potential_grad *= self._grid.constant.beta / (2 * self._grid.grid_width)
-        return potential_grad
+        potential_grad += phi_grad * CUPY_FLOAT(val_ion)
+        potential_grad[(potential_grad < 1e-5) & (potential_grad > 0)] = 1e-5
+        potential_grad[(potential_grad > -1e-5) & (potential_grad <= 0)] = -1e-5
+        return potential_grad.astype(CUPY_FLOAT)
 
     def _solve_npe(
         self,
@@ -340,33 +361,36 @@ class MPNPESolver:
         rho_ion = getattr(self._grid.field, "rho_%s" % ion_type)
         soa_factor_a = NUMPY_FLOAT(soa_factor)
         soa_factor_b = NUMPY_FLOAT(1 - soa_factor)
-        # Prefactor
-        pre_factor = cp.zeros_like(potential_grad, CUPY_FLOAT)
-        pre_factor[:, 0] = cp.exp(self._grid.grid_width * potential_grad[:, 0]) - 1
-        pre_factor[:, 1] = 1 - cp.exp(-self._grid.grid_width * potential_grad[:, 1])
-        pre_factor[cp.abs(pre_factor) < 1e-5] = 1e-5
-
-        # U_{i+} / (exp(h*U_{i+}) - 1)
-        pre_factor[:, 0] = potential_grad[:, 0] / pre_factor[:, 0]
-        # U_{i-} / (1 - exp(-h*U_{i-}))
-        pre_factor[:, 1] = potential_grad[:, 1] / pre_factor[:, 1]
+        # Pre factor and inv_denominator
+        pre_factor = cp.zeros(
+            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        )
+        exp_res = potential_grad / (cp.exp(potential_grad) - CUPY_FLOAT(1))
+        # self._test_field(exp_res[1, :-1, :-1, :-1])
+        pre_factor[0, 0] = exp_res[0, 1:, :-1, :-1]
+        pre_factor[0, 1] = exp_res[0, :-1, :-1, :-1]
+        pre_factor[1, 0] = exp_res[1, :-1, 1:, :-1]
+        pre_factor[1, 1] = exp_res[1, :-1, :-1, :-1]
+        pre_factor[2, 0] = exp_res[2, :-1, :-1, 1:]
+        pre_factor[2, 1] = exp_res[2, :-1, :-1, :-1]
 
         inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        # f(-u_i) = u_i - f(u_i)
+        # Prefactor
+        potential_grad_slice = [0, slice(None, -1), slice(None, -1), slice(None, -1)]
         for i in range(self._grid.num_dimensions):
-            for j in range(2):
-                inv_denominator += mask[i, j] * pre_factor[i, j]
-        self._test_field(inv_denominator)
-        # For non-zero denominator, Add a small value for non-pore area
-        threshold = -1e-8
-        inv_denominator[cp.abs(inv_denominator) < threshold] = threshold
-        # inv_denominator += (self._grid.field.mask[1:-1, 1:-1, 1:-1] - 1) * threshold
+            potential_grad_slice[0] = i
+            potential_grad_slice[i + 1] = slice(1, None)
+            inv_denominator += pre_factor[i, 0]  # f(u_i)
+            pre_factor[i, 0] = mask[i, 0] * (
+                potential_grad[tuple(potential_grad_slice)] + pre_factor[i, 0]
+            )  # f(-u_i)
+            potential_grad_slice[i + 1] = slice(None, -1)
+            inv_denominator += (
+                potential_grad[tuple(potential_grad_slice)] + pre_factor[i, 1]
+            )  # f(-u_{i-1})
+            pre_factor[i, 1] = mask[i, 1] * pre_factor[i, 1]  # f(u_{i-1})
         inv_denominator = CUPY_FLOAT(1) / inv_denominator
-        # Pre_factor
-        # U_{i+} / (exp(h*U_{i+}) - 1) + U_{i+} = U_{i+}exp(h*U_{i+}) / (exp(h*U_{i+}) - 1)
-        pre_factor[:, 0] += potential_grad[:, 0]
-        # U_{i-} / (1 - exp(-h*U_{i-})) - U_{i-} = U_{i-}exp(-h*U_{i+}) / (1 - exp(-h*U_{i-}))
-        pre_factor[:, 1] -= potential_grad[:, 1]
-
         # Iteration solve
         for iteration in range(num_iterations):
             nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
@@ -426,9 +450,10 @@ class MPNPESolver:
         plt.show()
 
     def solve(self, soa_factor=NUMPY_FLOAT(0.01)):
+        self._grid.field.mask = self._grid.field.mask.astype(cp.bool8)
         pe_pre_factor, pe_inv_denominator = self._generate_pe_coefficient()
         mask = self._get_mask()
-        num_iterations = 25
+        num_iterations = 50
         for i in range(10000):
             self._solve_pe(
                 pre_factor=pe_pre_factor,
@@ -520,7 +545,7 @@ def get_vdw(grid: Grid, type1: str, type2: str, distance):
     epsilon2 = check_quantity_value(VDW_DICT[type2]["epsilon"], default_energy_unit)
     sigma = 0.5 * (sigma1 + sigma2)
     epsilon = np.sqrt(epsilon1 * epsilon2)
-    scaled_distance = (sigma / (distance + 0.01)) ** 6
+    scaled_distance = (sigma / (distance + 0.0001)) ** 6
     vdw = grid.zeros_field()
     vdw[:, :, :] = 4 * epsilon * (scaled_distance**2 - scaled_distance)
     vdw[vdw > threshold] = threshold
@@ -529,7 +554,11 @@ def get_vdw(grid: Grid, type1: str, type2: str, distance):
 
 
 def get_epsilon(grid: Grid, pore_distance: cp.ndarray):
-    epsilon = grid.ones_field() * 78
+    epsilon = grid.ones_field()
+    pore_index = pore_distance > 0
+    epsilon[pore_index] = 78
+    epsilon[~pore_index] = 2
+    # epsilon = grid.ones_field() * 2
     return epsilon.astype(CUPY_FLOAT)
 
 
@@ -538,12 +567,14 @@ if __name__ == "__main__":
     json_dir = os.path.join(cur_dir, "../out")
     # Prefactor
     temperature = 300  # kelvin
-    r0 = 10
+    CC_BOND_LENGTH = 1.418
+    r0 = 9 * CC_BOND_LENGTH * 3 / (2 * np.pi)
+    print("r0: %.3f A" % r0)
     z0 = 10
     voltage = 1  # V
     thickness = 2.0
     rho_bulk = Quantity(0.15, mol / decimeter**3)
-    grid_width = 0.25
+    grid_width = 0.5
     grid_range = np.array([[-20, 20], [-20, 20], [-30, 30]])
     # Create grid
     grid = Grid(
