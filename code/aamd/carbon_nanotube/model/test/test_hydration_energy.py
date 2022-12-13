@@ -114,13 +114,14 @@ if __name__ == "__main__":
 
     sigma = Quantity(1.992 * 2 ** (5 / 6), angstrom)
     epsilon = Quantity(0.070, kilocalorie_permol)
-    r0 = Quantity(10, angstrom)
+    CC_BOND_LENGTH = 1.418
+    r0 = Quantity(6 * CC_BOND_LENGTH * 3 / (2 * np.pi), angstrom)
     z0 = Quantity(5, angstrom)
     n0 = Quantity(1.014, kilogram / decimeter**3) / Quantity(18, dalton)
     bin_width = 0.25
     bin_range = np.array([[-25.0, 25], [-25, 25], [-25, 25]])
 
-    ion = "pot"
+    ion = "sod"
     target = "oxygen"
     pore_file_path = os.path.join(out_dir, "%s-pore.json" % target)
     ion_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
@@ -173,7 +174,7 @@ if __name__ == "__main__":
     potential[potential >= 5] = 5
     fig, ax = plt.subplots(1, 1, figsize=[12, 8])
     half_index = x.shape[1] // 2
-    if True:
+    if not True:
         target_slice = (
             slice(None, None),
             half_index,
