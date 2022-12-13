@@ -19,14 +19,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hydration import HydrationDistributionFunction
 
-ion, target = "cla", "oxygen"
+ion, target = "sod", "hydrogen"
 TRY = False
-NUM_LAYER = 4
+NUM_LAYER = 3
 INITIAL_GUESS = [
-    [4, 3.1, 0.1],
-    [1, 3.7, 0.5],
-    [1.0, 5.2, 0.5],
-    [1.0, 6.3, 0.5],
+    [2.0, 2.9, 0.1],
+    [0.5, 3.8, 0.5],
+    [0.5, 5.1, 0.5],
     [2, 8],
 ]
 INITIAL_GUESS = [item for sublist in INITIAL_GUESS for item in sublist]
