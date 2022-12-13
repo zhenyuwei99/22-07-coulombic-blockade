@@ -25,7 +25,7 @@ from str.generator import CC_BOND_LENGTH
 
 
 def generate_simulation_recipe():
-    sim_step = int(200 * 1e6)
+    sim_step = int(25 * 1e6)
     simulation_recipe = [
         {"name": "minimize", "max_iterations": 500, "out_prefix": "01-minimize"},
         {
@@ -99,13 +99,9 @@ if __name__ == "__main__":
     w0_list = [Quantity(50, angstrom)]
     ls_list = [Quantity(25, angstrom)]
     ions_list = [
-        {"POT": Quantity(0.1, mol / decimeter**3)},
+        {"SOD": Quantity(0.1, mol / decimeter**3)},
     ]
     wall_charges_list = [[]]
-    # Job for water in channel
-    r0_list = channel_r0_list
-    l0_list = [Quantity(50, angstrom)]
-    ls_list = [Quantity(25, angstrom)]
     job_args.extend(
         list(
             product(
@@ -118,6 +114,22 @@ if __name__ == "__main__":
             )
         )
     )
+    # Job for water in channel
+    # r0_list = channel_r0_list
+    # l0_list = [Quantity(50, angstrom)]
+    # ls_list = [Quantity(25, angstrom)]
+    # job_args.extend(
+    #     list(
+    #         product(
+    #             r0_list,
+    #             l0_list,
+    #             w0_list,
+    #             ls_list,
+    #             ions_list,
+    #             wall_charges_list,
+    #         )
+    #     )
+    # )
     print("%s jobs in total" % (len(job_args)))
     json_file_path_list = []
     for (
@@ -128,7 +140,7 @@ if __name__ == "__main__":
         ions,
         wall_charges,
     ) in job_args:
-        for i in range(6):
+        for i in range(2):
             json_file_path = generate_json_file_path(
                 out_dir=out_dir, r0=r0, l0=l0, w0=w0, ls=ls, ions=ions, index=i
             )
@@ -145,4 +157,4 @@ if __name__ == "__main__":
                 )
             )
     command = "python %s %s" % (EXECUTION_FILE_PATH, " ".join(json_file_path_list))
-    # os.system(command)
+    os.system(command)

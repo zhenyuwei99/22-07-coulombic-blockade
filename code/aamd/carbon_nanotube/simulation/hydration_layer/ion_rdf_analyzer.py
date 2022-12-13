@@ -16,6 +16,7 @@ from mdpy.unit import *
 
 PARTICLE_NAME_MAP = {
     "pot": "POT",
+    "sod": "SOD",
     "cla": "CLA",
     "oxygen": "OT",
     "hydrogen": "HT",
@@ -24,12 +25,12 @@ PARTICLE_NAME_MAP = {
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(cur_dir, "out/analysis_out")
-    ion, target = "cla", "oxygen"
+    ion, target = "sod", "hydrogen"
     res_file_path = os.path.join(out_dir, "rdf-%s-%s.npz" % (ion, target))
     density_factor = 1 if target == "oxygen" else 2
 
     if True:
-        target_dir = "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/no-wall-charge/no-pore-w0-2.000A-ls-25.000A-POT-1.00e-01molPerL/pot-x-0.00A-y-0.00A-z-0.00A"
+        target_dir = "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/no-wall-charge-long-time/no-pore-w0-2.000A-ls-25.000A-SOD-1.00e-01molPerL-0"
         dcd_file_path = os.path.join(target_dir, "04-sample/04-sample.dcd")
         npt_file_path = os.path.join(target_dir, "02-eq-npt/restart.pdb")
         psf_file_path = os.path.join(target_dir, "str")
