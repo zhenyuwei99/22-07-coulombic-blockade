@@ -32,6 +32,7 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     print("Result save to", img_file_path)
 
     num_ions = len(ion_types)
+    cmap = "RdBu"
     half_index = grid.coordinate.x.shape[1] // 2
     target_slice = (
         slice(1, -1),
@@ -52,7 +53,7 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     num_levels = 100
     x = grid.coordinate.x[target_slice].get()
     z = grid.coordinate.z[target_slice].get()
-    c1 = ax[0].contourf(x, z, phi, num_levels)
+    c1 = ax[0].contourf(x, z, phi, num_levels, cmap=cmap)
     ax[0].set_title("Electric Potential", fontsize=big_font)
     ax[0].set_xlabel(r"x ($\AA$)", fontsize=big_font)
     ax[0].set_ylabel(r"z ($\AA$)", fontsize=big_font)
@@ -71,7 +72,7 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     norm = matplotlib.colors.Normalize(vmin=rho.min(), vmax=rho.max())
     for index, ion_type in enumerate(ion_types):
         fig_index = index + 1
-        c = ax[fig_index].contourf(x, z, rho[index], num_levels, norm=norm)
+        c = ax[fig_index].contourf(x, z, rho[index], num_levels, norm=norm, cmap=cmap)
         ax[fig_index].set_title("%s density" % ion_type, fontsize=big_font)
         ax[fig_index].set_xlabel(r"x ($\AA$)", fontsize=big_font)
         ax[fig_index].tick_params(labelsize=mid_font)
@@ -83,7 +84,7 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     cb1.ax.tick_params(labelsize=mid_font, labelleft=True, labelright=False)
 
     position = fig.add_axes([0.93, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
-    cb2 = fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm), cax=position)
+    cb2 = fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap), cax=position)
     cb2.ax.set_title("Density (mol/L)", fontsize=big_font)
     cb2.ax.tick_params(labelsize=mid_font)
     plt.savefig(img_file_path)
