@@ -23,53 +23,10 @@ from mdpy.unit import *
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hydration import get_pore_distance
+from solver import *
 
-DIFFUSION_UNIT = default_length_unit**2 / default_time_unit
-VAL_UNIT = default_charge_unit
-ION_DICT = {
-    "k": {
-        "d": Quantity(1.96e-9, meter**2 / second),
-        "val": Quantity(1, elementary_charge),
-    },
-    "na": {
-        "d": Quantity(1.33e-9, meter**2 / second),
-        "val": Quantity(1, elementary_charge),
-    },
-    "ca": {
-        "d": Quantity(0.79e-9, meter**2 / second),
-        "val": Quantity(2, elementary_charge),
-    },
-    "cl": {
-        "d": Quantity(2.03e-9, meter**2 / second),
-        "val": Quantity(-1, elementary_charge),
-    },
-}
-
-convert_factor = 2 ** (5 / 6)
-VDW_DICT = {
-    "c": {
-        "sigma": Quantity(1.992 * convert_factor, angstrom),
-        "epsilon": Quantity(0.070, kilocalorie_permol),
-    },
-    "k": {
-        "sigma": Quantity(1.764 * convert_factor, angstrom),
-        "epsilon": Quantity(0.087, kilocalorie_permol),
-    },
-    "na": {
-        "sigma": Quantity(1.411 * convert_factor, angstrom),
-        "epsilon": Quantity(0.047, kilocalorie_permol),
-    },
-    "ca": {
-        "sigma": Quantity(1.367 * convert_factor, angstrom),
-        "epsilon": Quantity(0.120, kilocalorie_permol),
-    },
-    "cl": {
-        "sigma": Quantity(2.270 * convert_factor, angstrom),
-        "epsilon": Quantity(0.150, kilocalorie_permol),
-    },
-}
 NP_DENSITY_UPPER_THRESHOLD = (
-    (Quantity(10, mol / decimeter**3) * NA)
+    (Quantity(7, mol / decimeter**3) * NA)
     .convert_to(1 / default_length_unit**3)
     .value
 )
@@ -235,7 +192,7 @@ class PNPESolver:
         potential_grad = cp.zeros(
             [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
         )
-        potential = self._grid.field.phi * val_ion #+ vdw_ion
+        potential = self._grid.field.phi * val_ion  # + vdw_ion
         ## X Neumann condition
         potential_grad[0, 0, :-1, :, :] = potential[2:-1, 1:-1, 1:-1]
         potential_grad[0, 0, -1, :, :] = (
@@ -360,10 +317,12 @@ class PNPESolver:
         return self._grid
 
 
-def get_phi(grid: Grid):
+def get_phi(grid: Grid, voltage=1):
     phi = grid.zeros_field()
     phi[:, :, -1] = (
-        Quantity(1, volt).convert_to(default_energy_unit / default_charge_unit).value
+        Quantity(voltage, volt)
+        .convert_to(default_energy_unit / default_charge_unit)
+        .value
     )
     return phi
 
