@@ -120,13 +120,26 @@ def analysis_z_flux(grid: Grid, ion_type: str):
     return flux.astype(CUPY_FLOAT)
 
 
-def visualize_flux(grid: Grid, ion_types: list[str], iteration=None):
+def analysis_current(grid, ion_type):
+    flux = analysis_z_flux(grid, ion_type)
+    index = flux.shape[-1] // 2
+    mask = grid.field.mask[1:-1, 1:-1, index + 1].get() >= 0.5
+    current = np.sum(flux[:, :, index], where=mask) * grid.grid_width**2
+    return current
+
+
+def visualize_flux(
+    grid: Grid, ion_types: list[str], iteration=None, img_file_path=None
+):
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     img_dir = os.path.join(cur_dir, "out/image")
-    if iteration is None:
-        img_file_path = os.path.join(img_dir, "z-flux.png")
-    else:
-        img_file_path = os.path.join(img_dir, "z-flux-%s.png" % str(iteration).zfill(3))
+    if img_file_path is None:
+        if iteration is None:
+            img_file_path = os.path.join(img_dir, "z-flux.png")
+        else:
+            img_file_path = os.path.join(
+                img_dir, "z-flux-%s.png" % str(iteration).zfill(3)
+            )
     print("Result save to", img_file_path)
 
     # Analysis
@@ -157,7 +170,7 @@ def visualize_flux(grid: Grid, ion_types: list[str], iteration=None):
     mask = grid.field.mask[1:-1, 1:-1, index + 1].get() >= 0.5
     for i, j in enumerate(ion_types):
         current = np.sum(flux[i][:, :, index], where=mask) * grid.grid_width**2
-        # for n in range(-3, 3):
+        # for n in [-10, -5, 0, 5, 10]:
         #     print(np.sum(flux[i][:, :, index + n], where=mask), end="; ")
         # print("End")
         c = ax[i].contourf(
