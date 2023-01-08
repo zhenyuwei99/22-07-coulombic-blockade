@@ -14,9 +14,8 @@ import sys
 import numpy as np
 import cupy as cp
 import numba.cuda as cuda
-
-# import cupyx.scipy.signal as signal
 import scipy.signal as signal
+import mdpy as md
 from mdpy.core import Grid
 from mdpy.utils import check_quantity_value
 from mdpy.environment import *
@@ -25,90 +24,14 @@ from mdpy.unit import *
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hydration import *
-from pnpe import *
+from solver import *
+from analysis import *
 from utils import *
-
-NP_DENSITY_UPPER_THRESHOLD = (
-    (Quantity(5, mol / decimeter**3) * NA)
-    .convert_to(1 / default_length_unit**3)
-    .value
-)
-NP_DENSITY_LOWER_THRESHOLD = (
-    (Quantity(0.001, mol / decimeter**3) * NA)
-    .convert_to(1 / default_length_unit**3)
-    .value
-)
-
-
-def visualize_result(grid: Grid, iteration):
-    cur_dir = os.path.dirname(os.path.abspath(__file__))
-    img_dir = os.path.join(cur_dir, "out/image")
-    img_file_path = os.path.join(img_dir, "%s.png" % str(iteration).zfill(3))
-
-    half_index = grid.coordinate.x.shape[1] // 2
-    target_slice = (
-        slice(1, -1),
-        half_index,
-        slice(1, -1),
-    )
-    phi = (
-        Quantity(
-            (grid.field.phi[target_slice]).get(),
-            default_energy_unit / default_charge_unit,
-        )
-        .convert_to(volt)
-        .value
-    )
-    rho_k = (
-        (Quantity(grid.field.rho_k[target_slice], 1 / default_length_unit**3) / NA)
-        .convert_to(mol / decimeter**3)
-        .value
-    )
-    rho_cl = (
-        (Quantity(grid.field.rho_cl[target_slice], 1 / default_length_unit**3) / NA)
-        .convert_to(mol / decimeter**3)
-        .value
-    )
-    # phi = rho_k + rho_cl
-
-    fig, ax = plt.subplots(1, 3, figsize=[25, 8])
-    big_font = 20
-    mid_font = 15
-    num_levels = 100
-    x = grid.coordinate.x[target_slice].get()
-    z = grid.coordinate.z[target_slice].get()
-    c1 = ax[0].contourf(x, z, phi, num_levels)
-    ax[0].set_title("Electric Potential", fontsize=big_font)
-    ax[0].set_xlabel(r"x ($\AA$)", fontsize=big_font)
-    ax[0].set_ylabel(r"z ($\AA$)", fontsize=big_font)
-    ax[0].tick_params(labelsize=mid_font)
-
-    rho = np.stack([rho_k, rho_cl])
-    norm = matplotlib.colors.Normalize(vmin=rho.min(), vmax=rho.max())
-    c2 = ax[1].contourf(x, z, rho_k, num_levels, norm=norm)
-    ax[1].set_title("POT density", fontsize=big_font)
-    ax[1].set_xlabel(r"x ($\AA$)", fontsize=big_font)
-    ax[1].tick_params(labelsize=mid_font)
-    c3 = ax[2].contourf(x, z, rho_cl, num_levels, norm=norm)
-    ax[2].set_title("CLA density", fontsize=big_font)
-    ax[2].set_xlabel(r"x ($\AA$)", fontsize=big_font)
-    ax[2].tick_params(labelsize=mid_font)
-    fig.subplots_adjust(left=0.12, right=0.9)
-    position = fig.add_axes([0.05, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
-    cb1 = fig.colorbar(c1, cax=position)
-    cb1.ax.set_title(r"$\phi$ (V)", fontsize=big_font)
-    cb1.ax.tick_params(labelsize=mid_font, labelleft=True, labelright=False)
-
-    position = fig.add_axes([0.93, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
-    cb2 = fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm), cax=position)
-    cb2.ax.set_title("Density (mol/L)", fontsize=big_font)
-    cb2.ax.tick_params(labelsize=mid_font)
-    plt.savefig(img_file_path)
-    plt.close()
+from pnpe import get_mask, get_phi, get_rho_fix, get_rho_ion
 
 
 class MPNPESolver:
-    def __init__(self, grid: Grid, ion_types: list[str]) -> None:
+    def __init__(self, grid: Grid, ion_types: list[str], is_pnp=False) -> None:
         """All grid and constant in default unit
 
         Field:
@@ -130,6 +53,7 @@ class MPNPESolver:
         """
         self._grid = grid
         self._ion_types = ion_types
+        self._is_pnp = is_pnp
         field_name_list = ["phi", "phi_s", "epsilon", "mask", "rho_fix"]
         constant_name_list = ["epsilon0", "beta"]
         # Add epsilon0
@@ -259,6 +183,9 @@ class MPNPESolver:
                     == self._grid.field.mask[1:-1, 1:-1, 1:-1]
                 ) & (self._grid.field.mask[1:-1, 1:-1, 1:-1] == 1)
             target_slice[i] = slice(1, -1)
+        # mask = cp.ones(
+        #     [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
+        # )
         return mask
 
     def _update_phi_s(self):
@@ -272,8 +199,7 @@ class MPNPESolver:
         phi_s[phi_s <= 1e-5] = 1e-5
         phi_s[phi_s >= 1] = 1
         phi_s = -cp.log(phi_s) / self.grid.constant.beta
-        phi_s = phi_s.astype(CUPY_FLOAT)
-        self._grid.field.phi_s[1:-1, 1:-1, 1:-1] = phi_s
+        self._grid.field.phi_s[1:-1, 1:-1, 1:-1] = phi_s.astype(CUPY_FLOAT)
         self_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
         target_slice = [slice(None, None) for i in range(self._grid.num_dimensions)]
         # Set boundary value
@@ -319,9 +245,6 @@ class MPNPESolver:
         return phi_grad.astype(CUPY_FLOAT)
 
     def _get_potential_grad(self, ion_type: str, phi_grad: cp.ndarray):
-        val_ion = getattr(self._grid.constant, "val_%s" % ion_type)
-        vdw_ion = getattr(self._grid.field, "vdw_%s" % ion_type)
-        hyd_ion = getattr(self._grid.field, "hyd_%s" % ion_type)
         potential_grad = cp.zeros(
             [
                 self._grid.num_dimensions,
@@ -331,8 +254,14 @@ class MPNPESolver:
             ],
             CUPY_FLOAT,
         )
-        # External potential
-        potential = hyd_ion + self._grid.field.phi_s  # + vdw_ion
+        potential = self._grid.zeros_field()
+        val_ion = getattr(self._grid.constant, "val_%s" % ion_type)
+        potential += self._grid.field.phi_s
+        if not self._is_pnp:
+            # vdw_ion = getattr(self._grid.field, "vdw_%s" % ion_type)
+            hyd_ion = getattr(self._grid.field, "hyd_%s" % ion_type)
+            # External potential
+            potential += hyd_ion  # + vdw_ion
         potential_grad[0, :, :-1, :-1] = (
             potential[1:, 1:-1, 1:-1] - potential[:-1, 1:-1, 1:-1]
         )
@@ -422,8 +351,21 @@ class MPNPESolver:
             nominator[:, 0, :] += pre_factor[1, 1, :, 0, :] * (
                 rho_ion[1:-1, 1, 1:-1] - rho_ion[1:-1, 0, 1:-1] * self._grid.grid_width
             )
-            # Z Dirichlet
+            # Z Dirichlet for 0 and Neumann for -1
+            # nominator[:, :, :-1] += (
+            #     pre_factor[2, 0, :, :, :-1] * rho_ion[1:-1, 1:-1, 2:-1]
+            # )
+            # nominator[:, :, -1] += pre_factor[2, 0, :, :, -1] * (
+            #     rho_ion[1:-1, 1:-1, -2]
+            #     + rho_ion[1:-1, 1:-1, -1] * self._grid.grid_width
+            # )
             nominator += pre_factor[2, 0] * rho_ion[1:-1, 1:-1, 2:]
+            # nominator[:, :, 1:] += (
+            #     pre_factor[2, 1, :, :, 1:] * rho_ion[1:-1, 1:-1, 1:-2]
+            # )
+            # nominator[:, :, 0] += pre_factor[2, 1, :, :, 0] * (
+            #     rho_ion[1:-1, 1:-1, 1] - rho_ion[1:-1, 1:-1, 0] * self._grid.grid_width
+            # )
             nominator += pre_factor[2, 1] * rho_ion[1:-1, 1:-1, :-2]
             # if iteration % 100 == 0:
             #     print(nominator)
@@ -449,17 +391,21 @@ class MPNPESolver:
         fig.colorbar(c)
         plt.show()
 
-    def solve(self, soa_factor=NUMPY_FLOAT(0.01)):
+    def iterate(
+        self,
+        num_epochs: int,
+        num_iterations_per_equation: int = 50,
+        soa_factor: float = NUMPY_FLOAT(0.01),
+    ):
         self._grid.field.mask = self._grid.field.mask.astype(cp.bool8)
         pe_pre_factor, pe_inv_denominator = self._generate_pe_coefficient()
         mask = self._get_mask()
-        num_iterations = 50
-        for i in range(10000):
+        for i in range(num_epochs):
             self._solve_pe(
                 pre_factor=pe_pre_factor,
                 inv_denominator=pe_inv_denominator,
                 soa_factor=soa_factor,
-                num_iterations=num_iterations,
+                num_iterations=num_iterations_per_equation,
             )
             self._update_phi_s()
             phi_grad = self._get_phi_grad()
@@ -469,11 +415,24 @@ class MPNPESolver:
                     mask=mask,
                     phi_grad=phi_grad,
                     soa_factor=soa_factor,
-                    num_iterations=num_iterations,
+                    num_iterations=num_iterations_per_equation,
                 )
-            if (i * num_iterations) % 2500 == 0:
-                print(i)
-                visualize_result(self._grid, i)
+
+    def _get_energy(self):
+        energy = CUPY_FLOAT(0)
+        for ion_type in self._ion_types:
+            # Entropy
+            rho_ion = getattr(self._grid.field, "rho_%s" % ion_type)
+            energy += (rho_ion * cp.log(rho_ion)).sum()
+            # External potential
+            val_ion = getattr(self._grid.constant, "val_%s" % ion_type)
+            potential = val_ion * self._grid.field.phi
+            potential += self._grid.field.phi_s
+            if not self._is_pnp:
+                vdw_ion = getattr(self._grid.field, "vdw_%s" % ion_type)
+                hyd_ion = getattr(self._grid.field, "hyd_%s" % ion_type)
+                potential += hyd_ion
+            energy += (potential * rho_ion).sum()
 
     @property
     def grid(self) -> Grid:
@@ -549,7 +508,7 @@ def get_vdw(grid: Grid, type1: str, type2: str, distance):
     vdw = grid.zeros_field()
     vdw[:, :, :] = 4 * epsilon * (scaled_distance**2 - scaled_distance)
     vdw[vdw > threshold] = threshold
-    print(Quantity(vdw.min(), default_energy_unit).convert_to(kilojoule_permol).value)
+    # print(Quantity(vdw.min(), default_energy_unit).convert_to(kilojoule_permol).value)
     return vdw
 
 
@@ -562,87 +521,142 @@ def get_epsilon(grid: Grid, pore_distance: cp.ndarray):
     return epsilon.astype(CUPY_FLOAT)
 
 
+def get_phi(grid: Grid, voltage=1):
+    phi = grid.zeros_field()
+    phi[:, :, -1] = (
+        Quantity(voltage / 2, volt)
+        .convert_to(default_energy_unit / default_charge_unit)
+        .value
+    )
+    phi[:, :, -1] = (
+        Quantity(-voltage / 2, volt)
+        .convert_to(default_energy_unit / default_charge_unit)
+        .value
+    )
+    return phi
+
+
+def get_rho_ion(grid: Grid, rho_bulk: float):
+    rho_ion = grid.zeros_field()
+    rho_ion[:, :, 0] = rho_bulk
+    rho_ion[:, :, -1] = rho_bulk
+    return rho_ion
+
+
 if __name__ == "__main__":
+    from itertools import product
+
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     json_dir = os.path.join(cur_dir, "../out")
+    out_dir = os.path.join(cur_dir, "out")
+    is_skip = not True
     # Prefactor
     temperature = 300  # kelvin
-    CC_BOND_LENGTH = 1.418
-    r0 = 9 * CC_BOND_LENGTH * 3 / (2 * np.pi)
-    print("r0: %.3f A" % r0)
-    z0 = 10
-    voltage = 1  # V
+    if not True:
+        r0_list = [i * CC_BOND_LENGTH * 3 / (2 * np.pi) for i in [15]]
+        # voltage_list = [-15, -10, -7.5, -5, -2, -1, -0.5, 0.5, 1, 2, 5, 7.5, 10, 15]
+        voltage_list = [0.5, 1, 2, 5, 7.5, 10, 15, 20]
+        is_pnp_list = [False, True]
+    else:
+        r0_list = [i * CC_BOND_LENGTH * 3 / (2 * np.pi) for i in [15]]
+        voltage_list = [-7.5]
+        is_pnp_list = [False]
+    z0 = 25
+    zs = 30
+    w0 = 100
     thickness = 2.0
     rho_bulk = Quantity(0.15, mol / decimeter**3)
-    grid_width = 0.5
-    grid_range = np.array([[-20, 20], [-20, 20], [-30, 30]])
-    # Create grid
-    grid = Grid(
-        grid_width=grid_width,
-        x=grid_range[0],
-        y=grid_range[1],
-        z=grid_range[2],
-    )
-    # Create solver
+    grid_width = 1
+    grid_range = np.array([[-w0, w0], [-w0, w0], [-z0 - zs, z0 + zs]])
     ion_types = ["k", "cl"]
-    solver = MPNPESolver(grid, ion_types=ion_types)
-    # Add beta
-    beta = (Quantity(temperature, kelvin) * KB).convert_to(default_energy_unit)
-    beta = CUPY_FLOAT(1 / beta.value)
-    solver.grid.add_constant("beta", beta)
-    # Add field
-    rho_bulk = (rho_bulk * NA).convert_to(1 / default_length_unit**3).value
-    pore_distance = get_pore_distance(
-        x=solver.grid.coordinate.x,
-        y=solver.grid.coordinate.y,
-        z=solver.grid.coordinate.z,
-        r0=r0,
-        z0=z0,
-        thickness=thickness,
-    )
-    solver.grid.add_field("phi", get_phi(grid, voltage))
-    solver.grid.add_field("phi_s", grid.zeros_field())
-    solver.grid.add_field("epsilon", get_epsilon(grid, pore_distance))
-    solver.grid.add_field("mask", get_mask(grid, pore_distance))
-    solver.grid.add_field("rho_fix", get_rho_fix(grid))
-    solver.grid.add_field("rho_k", get_rho_ion(grid, rho_bulk))
-    solver.grid.add_field("rho_cl", get_rho_ion(grid, rho_bulk))
-    solver.grid.add_field("vdw_k", get_vdw(grid, "c", "k", pore_distance))
-    solver.grid.add_field("vdw_cl", get_vdw(grid, "c", "cl", pore_distance))
-    solver.grid.add_field("hyd_k", get_hyd(grid, json_dir, "pot", r0, z0, thickness))
-    solver.grid.add_field("hyd_cl", get_hyd(grid, json_dir, "cla", r0, z0, thickness))
-
-    solver.solve()
-
-    fig, ax = plt.subplots(1, 1)
-    half_index = grid.coordinate.x.shape[1] // 2
-    if True:
-        target_slice = (
-            half_index,
-            slice(1, -1),
-            slice(1, -1),
+    num_cations = 0
+    for ion_type in ion_types:
+        num_cations += 0 if ion_type == "cl" else 1
+    job_list = list(product(r0_list, voltage_list, is_pnp_list))
+    num_jobs = len(job_list)
+    print("r0 list", r0_list)
+    print("%s jobs in total" % num_jobs)
+    for i, (r0, voltage, is_pnp) in enumerate(job_list):
+        name = generate_name(
+            ion_types=ion_types,
+            r0=r0,
+            w0=w0,
+            zs=zs,
+            z0=z0,
+            rho=rho_bulk,
+            voltage=voltage,
+            grid_width=grid_width,
+            is_pnp=is_pnp,
         )
-        print(pore_distance[half_index, 0, half_index])
-        c = ax.contourf(
-            grid.coordinate.y[target_slice].get(),
-            grid.coordinate.z[target_slice].get(),
-            # pore_distance[target_slice].get(),
-            grid.field.hyd_k[target_slice],
-            200,
+        file_path = os.path.join(out_dir, name + ".grid")
+        if os.path.exists(file_path) and is_skip:
+            print("Skip %s as result existed" % name)
+            continue
+        # Create grid
+        grid = Grid(
+            grid_width=grid_width,
+            x=grid_range[0],
+            y=grid_range[1],
+            z=grid_range[2],
         )
-        fig.colorbar(c)
-    else:
-        target_slice = (
-            half_index,
-            slice(1, -1),
-            half_index,
+        # Create solver
+        solver = MPNPESolver(grid, ion_types=ion_types, is_pnp=is_pnp)
+        # Add beta
+        beta = (Quantity(temperature, kelvin) * KB).convert_to(default_energy_unit)
+        beta = CUPY_FLOAT(1 / beta.value)
+        solver.grid.add_constant("beta", beta)
+        # Add field
+        rho_bulk_val = (rho_bulk * NA).convert_to(1 / default_length_unit**3).value
+        pore_distance = get_pore_distance(
+            x=solver.grid.coordinate.x,
+            y=solver.grid.coordinate.y,
+            z=solver.grid.coordinate.z,
+            r0=r0,
+            z0=z0,
+            thickness=thickness,
         )
-        ax.plot(
-            grid.coordinate.y[target_slice].get(),
-            Quantity(grid.field.hyd_k[target_slice].get(), default_energy_unit)
-            .convert_to(kilocalorie_permol)
-            .value,
-            200,
+        solver.grid.add_field("phi", get_phi(grid, voltage))
+        solver.grid.add_field("phi_s", grid.zeros_field())
+        solver.grid.add_field("epsilon", get_epsilon(grid, pore_distance))
+        solver.grid.add_field("mask", get_mask(grid, pore_distance))
+        solver.grid.add_field("rho_fix", get_rho_fix(grid))
+        for ion_type in ion_types:
+            if ion_type != "cl":
+                solver.grid.add_field(
+                    "rho_%s" % ion_type, get_rho_ion(grid, rho_bulk_val)
+                )
+            else:
+                solver.grid.add_field(
+                    "rho_%s" % ion_type, get_rho_ion(grid, rho_bulk_val * num_cations)
+                )
+            solver.grid.add_field(
+                "vdw_%s" % ion_type, get_vdw(grid, "c", ion_type, pore_distance)
+            )
+            solver.grid.add_field(
+                "hyd_%s" % ion_type,
+                get_hyd(grid, json_dir, "pot", r0, z0, thickness),
+            )
+        if not True:
+            solver._grid = md.io.GridParser(file_path).grid
+        total_iterations = 300000
+        num_iter_per_eq = 50
+        num_epochs = total_iterations // num_iter_per_eq
+        visualize_freq = 100
+        for iteration in range(num_epochs // visualize_freq):
+            visualize_flux(
+                solver.grid, iteration=iteration * visualize_freq, ion_types=ion_types
+            )
+            visualize_concentration(
+                solver.grid,
+                iteration=iteration * visualize_freq,
+                ion_types=ion_types,
+            )
+            solver.iterate(
+                num_epochs=visualize_freq, num_iterations_per_equation=num_iter_per_eq
+            )
+        writer = md.io.GridWriter(file_path)
+        writer.write(grid=solver.grid)
+        print(
+            "Finish %s (%d/%d, %.3f %%)"
+            % (name, i + 1, num_jobs, (i + 1) / num_jobs * 100)
         )
-        ax.set_ylim([-1, 4])
-    plt.show()
