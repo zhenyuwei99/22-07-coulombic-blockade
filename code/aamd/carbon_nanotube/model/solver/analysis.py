@@ -121,7 +121,7 @@ def analysis_z_flux(grid: Grid, ion_type: str):
 
 
 def analysis_current(grid, ion_type):
-    flux = analysis_z_flux(grid, ion_type)
+    flux = analysis_z_flux(grid, ion_type).get()
     index = flux.shape[-1] // 2
     mask = grid.field.mask[1:-1, 1:-1, index + 1].get() >= 0.5
     current = np.sum(flux[:, :, index], where=mask) * grid.grid_width**2
@@ -171,7 +171,7 @@ def visualize_flux(
     for i, j in enumerate(ion_types):
         current = np.sum(flux[i][:, :, index], where=mask) * grid.grid_width**2
         # for n in [-10, -5, 0, 5, 10]:
-        #     print(np.sum(flux[i][:, :, index + n], where=mask), end="; ")
+        # print(np.sum(flux[i][:, :, index + n], where=mask), end=", ")
         # print("End")
         c = ax[i].contourf(
             x, z, flux[i][tuple(target_slice)], num_levels, norm=norm, cmap=cmap
@@ -189,3 +189,12 @@ def visualize_flux(
     cb.ax.tick_params(labelsize=mid_font)
     plt.savefig(img_file_path)
     plt.close()
+
+
+if __name__ == "__main__":
+    import mdpy as md
+
+    grid_file_path = "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/model/solver/out/pnp-k-cl-0.15molPerL-r0-10.16A-z0-25.00A-zs-50.00A-w0-25.00A-h-0.50A-2.00V.grid"
+    grid = md.io.GridParser(grid_file_path).grid
+    # visualize_flux(grid=grid, ion_types=["k", "na", "cl"])
+    visualize_concentration(grid=grid, ion_types=["k", "cl"])
