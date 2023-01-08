@@ -53,7 +53,7 @@ VDW_DICT = {
     },
 }
 NP_DENSITY_UPPER_THRESHOLD = (
-    (Quantity(7, mol / decimeter**3) * NA)
+    (Quantity(4, mol / decimeter**3) * NA)
     .convert_to(1 / default_length_unit**3)
     .value
 )
