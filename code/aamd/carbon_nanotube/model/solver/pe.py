@@ -22,7 +22,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hydration import get_pore_distance
 
 
-class PESolver:
+class PECartesianSolver:
     def __init__(self, grid: Grid) -> None:
         """All grid and constant in default unit
         Variable:
@@ -37,7 +37,9 @@ class PESolver:
 
         Boundary condition:
         - dirichlet: Dirichlet boundary condition
+            - index, value required
         - neumann: Neumann boundary condition
+            - self_index, target_index, value required
         """
         self._grid = grid
         self._grid.add_requirement("variable", "phi")
@@ -50,40 +52,47 @@ class PESolver:
         self._grid.add_constant("epsilon0", epsilon0)
 
     def _get_coefficient(self):
-        factor = NUMPY_FLOAT(0.5 / self._grid.grid_width**2)
-        pre_factor = cp.zeros(
-            [self._grid.num_dimensions, 2] + self._grid.inner_shape, CUPY_FLOAT
-        )
+        pre_factor = NUMPY_FLOAT(0.5 / self._grid.grid_width**2)
+        # 1: for plus and :-1 for minus
+        shape = [self._grid.num_dimensions] + [i + 1 for i in self._grid.inner_shape]
+        factor = cp.zeros(shape, CUPY_FLOAT)
         inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        target_slice = [slice(1, -1) for i in range(self._grid.num_dimensions)]
-        for i in range(self._grid.num_dimensions):
-            for j in range(2):
-                # 0 for plus and 1 for minus
-                target_slice[i] = slice(2, None) if j == 0 else slice(0, -2)
-                pre_factor[i, j] = factor * (
-                    self._grid.field.epsilon[tuple(target_slice)]
-                    + self._grid.field.epsilon[1:-1, 1:-1, 1:-1]
-                )
-                inv_denominator += pre_factor[i, j]
-            target_slice[i] = slice(1, -1)
+        # X
+        factor[0, :, :-1, :-1] = pre_factor * (
+            self._grid.field.epsilon[1:, 1:-1, 1:-1]
+            + self._grid.field.epsilon[:-1, 1:-1, 1:-1]
+        )
+        inv_denominator += factor[0, 1:, :-1, :-1] + factor[0, :-1, :-1, :-1]
+        # Y
+        factor[1, :-1, :, :-1] = pre_factor * (
+            self._grid.field.epsilon[1:-1, 1:, 1:-1]
+            + self._grid.field.epsilon[1:-1, :-1, 1:-1]
+        )
+        inv_denominator += factor[1, :-1, 1:, :-1] + factor[1, :-1, :-1, :-1]
+        # Z
+        factor[2, :-1, :-1, :] = pre_factor * (
+            self._grid.field.epsilon[1:-1, 1:-1, 1:]
+            + self._grid.field.epsilon[1:-1, 1:-1, :-1]
+        )
+        inv_denominator += factor[2, :-1, :-1, 1:] + factor[2, :-1, :-1, :-1]
         inv_denominator = CUPY_FLOAT(1) / inv_denominator
-        return pre_factor, inv_denominator
+        return factor, inv_denominator
 
-    def _update_boundary_point(self, variable):
-        for boundary_type, boundary_data in variable.boundary.items():
+    def _update_boundary_point(self, phi):
+        for boundary_type, boundary_data in phi.boundary.items():
             boundary_type = boundary_type.lower()
             if boundary_type == "dirichlet":
                 index = boundary_data["index"]
                 value = boundary_data["value"]
-                variable.value[index[:, 0], index[:, 1], index[:, 2]] = value
+                phi.value[index[:, 0], index[:, 1], index[:, 2]] = value
             elif boundary_type == "neumann":
                 self_index = boundary_data["self_index"]
                 neighbor_index = boundary_data["neighbor_index"]
                 value = boundary_data["value"]
                 dist = (neighbor_index - self_index).sum(1).astype(CUPY_FLOAT)
-                print(dist.shape, value.shape)
-                variable.value[self_index[:, 0], self_index[:, 1], self_index[:, 2]] = (
-                    variable.value[
+                dist *= self._grid.grid_width
+                phi.value[self_index[:, 0], self_index[:, 1], self_index[:, 2]] = (
+                    phi.value[
                         neighbor_index[:, 0], neighbor_index[:, 1], neighbor_index[:, 2]
                     ]
                     - dist * value
@@ -94,34 +103,36 @@ class PESolver:
                     % boundary_type
                 )
 
-    def _update_inner_point(self, pre_factor, inv_denominator, scaled_rho, soa_factor):
+    def _update_inner_point(self, phi, factor, inv_denominator, scaled_rho, soa_factor):
         factor_a, factor_b = CUPY_FLOAT(soa_factor), CUPY_FLOAT(1 - soa_factor)
         nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         # X Neumann condition
-        nominator += pre_factor[0, 0] * self._grid.variable.phi.value[2:, 1:-1, 1:-1]
-        nominator += pre_factor[0, 1] * self._grid.variable.phi.value[:-2, 1:-1, 1:-1]
+        nominator += factor[0, 1:, :-1, :-1] * phi.value[2:, 1:-1, 1:-1]
+        nominator += factor[0, :-1, :-1, :-1] * phi.value[:-2, 1:-1, 1:-1]
         # Y Neumann
-        nominator += pre_factor[1, 0] * self._grid.variable.phi.value[1:-1, 2:, 1:-1]
-        nominator += pre_factor[1, 1] * self._grid.variable.phi.value[1:-1, :-2, 1:-1]
+        nominator += factor[1, :-1, 1:, :-1] * phi.value[1:-1, 2:, 1:-1]
+        nominator += factor[1, :-1, :-1, :-1] * phi.value[1:-1, :-2, 1:-1]
         # Z Neumann
-        nominator += pre_factor[2, 0] * self._grid.variable.phi.value[1:-1, 1:-1, 2:]
-        nominator += pre_factor[2, 1] * self._grid.variable.phi.value[1:-1, 1:-1, :-2]
+        nominator += factor[2, :-1, :-1, 1:] * phi.value[1:-1, 1:-1, 2:]
+        nominator += factor[2, :-1, :-1, :-1] * phi.value[1:-1, 1:-1, :-2]
         # Add charge
         nominator += scaled_rho
-        self._grid.variable.phi.value[1:-1, 1:-1, 1:-1] = (
-            factor_a * self._grid.variable.phi.value[1:-1, 1:-1, 1:-1]
+        # Update
+        phi.value[1:-1, 1:-1, 1:-1] = (
+            factor_a * phi.value[1:-1, 1:-1, 1:-1]
             + factor_b * nominator * inv_denominator
         )
 
     def iterate(self, num_iterations, soa_factor=0.01):
         self._grid.check_requirement()
-        pre_factor, inv_denominator = self._get_coefficient()
+        factor, inv_denominator = self._get_coefficient()
         inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
-        scaled_rho = grid.field.rho[1:-1, 1:-1, 1:-1] * inv_epsilon0
+        scaled_rho = self._grid.field.rho[1:-1, 1:-1, 1:-1] * inv_epsilon0
         for iteration in range(num_iterations):
             self._update_boundary_point(self._grid.variable.phi)
             self._update_inner_point(
-                pre_factor=pre_factor,
+                phi=self._grid.variable.phi,
+                factor=factor,
                 inv_denominator=inv_denominator,
                 scaled_rho=scaled_rho,
                 soa_factor=soa_factor,
@@ -214,7 +225,7 @@ if __name__ == "__main__":
 
     r0, z0 = 30, 5
     grid = Grid(grid_width=0.25, x=[-50, 50], y=[-50, 50], z=[-50, 50])
-    solver = PESolver(grid=grid)
+    solver = PECartesianSolver(grid=grid)
     grid.add_variable("phi", get_phi(grid))
     grid.add_field("rho", get_rho(grid))
     grid.add_field("epsilon", get_epsilon(grid, r0, z0))
@@ -245,7 +256,7 @@ if __name__ == "__main__":
         grid.coordinate.x[target_slice].get(),
         grid.coordinate.z[target_slice].get(),
         phi[target_slice],
-        200,
+        100,
     )
     fig.colorbar(c)
     plt.show()
