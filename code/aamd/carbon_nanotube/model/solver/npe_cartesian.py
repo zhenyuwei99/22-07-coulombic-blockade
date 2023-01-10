@@ -25,7 +25,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from solver import *
 
 
-class NPESolver:
+class NPECartesianSolver:
     def __init__(self, grid: Grid, ion_type: str) -> None:
         """All grid and constant in default unit
         Variable:
