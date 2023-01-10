@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 """
-file : npe.py
+file : npe_cartesian.py
 created time : 2023/01/09
 author : Zhenyu Wei
 version : 1.0
@@ -273,7 +273,7 @@ if __name__ == "__main__":
     beta = 1 / beta
     r0, z0 = 30, 5
     grid = Grid(grid_width=0.25, x=[-10, 10], y=[-10, 10], z=[-10, 10])
-    solver = NPESolver(grid=grid, ion_type="k")
+    solver = NPECartesianSolver(grid=grid, ion_type="k")
     grid.add_variable("rho_k", get_rho(grid))
     grid.add_field(
         "u_k", get_u(grid, height=Quantity(10.5, kilocalorie_permol), sigma=2)
