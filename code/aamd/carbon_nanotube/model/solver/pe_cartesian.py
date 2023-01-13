@@ -25,21 +25,18 @@ from hydration import get_pore_distance
 class PECartesianSolver:
     def __init__(self, grid: Grid) -> None:
         """All grid and constant in default unit
-        Variable:
+        ### Variable:
         - phi: Electric potential
-
-        Field:
+            - dirichlet: Dirichlet boundary condition
+                - index, value required
+            - neumann: Neumann boundary condition
+                - self_index, target_index, value required
+        ### Field:
         - epsilon: Relative permittivity
         - rho: charge density
 
-        Constant:
+        ### Constant:
         - epsilon0 (added): Vacuum permittivity
-
-        Boundary condition:
-        - dirichlet: Dirichlet boundary condition
-            - index, value required
-        - neumann: Neumann boundary condition
-            - self_index, target_index, value required
         """
         self._grid = grid
         self._grid.add_requirement("variable", "phi")
