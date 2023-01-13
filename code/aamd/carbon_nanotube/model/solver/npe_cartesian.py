@@ -28,23 +28,21 @@ from solver import *
 class NPECartesianSolver:
     def __init__(self, grid: Grid, ion_type: str) -> None:
         """All grid and constant in default unit
-        Variable:
-        - rho: Number density
+        ### Variable:
+        - rho_[ion]: Number density of [ion]
+            - dirichlet: Dirichlet boundary condition
+                - index, value required
+            - no-flux: No flux boundary condition
+                - self_index, direction, value required
 
-        Field:
+        ### Field:
         - u_[ion]: External potential of [ion]
 
-        Constant:
+        ### Constant:
         - beta: 1/kBT
         - r_[ion] (added): Radius of [ion]
         - z_[ion] (added): Valence of [ion]
         - d_[ion] (added): Diffusion coefficient of [ion]
-
-        Boundary:
-        - dirichlet: Dirichlet boundary condition
-            - index, value required
-        - no-flux: No flux boundary condition
-            - self_index, direction, value required
         """
         self._grid = grid
         if not ion_type in ION_DICT.keys():
