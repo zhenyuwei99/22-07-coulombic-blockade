@@ -33,8 +33,10 @@ class PECylinderSolver:
         - phi: Electric potential
             - dirichlet: Dirichlet boundary condition
                 - index, value required
-            - neumann: Neumann boundary condition
-                - self_index, target_index, value required
+            - z-no-gradient: dphi/dz = 0
+                - index, direction required. Direction is the index difference between neighbor
+            - r-symmetry: dphi/dr = 0
+                - index, direction required.
         ### Field:
         - epsilon: Relative permittivity
         - rho: charge density
@@ -53,42 +55,27 @@ class PECylinderSolver:
         self._grid.add_constant("epsilon0", epsilon0)
 
     def _get_coefficient(self):
-        pre_factor = NUMPY_FLOAT(0.5 / self._grid.grid_width**2)
-        half_width_factor = (
-            NUMBA_FLOAT(0.5 * self._grid.grid_width)
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
+        pre_factor = CUPY_FLOAT(1 / 4 / self._grid.grid_width**2)
+        epsilon = self._grid.field.epsilon
+        epsilon_h2 = inv_h2 * epsilon[1:-1, 1:-1]
+        scaled_2hr = (
+            CUPY_FLOAT(1 / 2 / self._grid.grid_width)
             / self._grid.coordinate.r[1:-1, 1:-1]
-        )
-        # 1: for plus and :-1 for minus
+            * epsilon[1:-1, 1:-1]
+        ).astype(CUPY_FLOAT)
+        # 0 for plus and 1 for minus
         shape = [self._grid.num_dimensions, 2] + self._grid.inner_shape
         factor = cp.zeros(shape, CUPY_FLOAT)
-        inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
+        inv_denominator = CUPY_FLOAT(0.25) / epsilon_h2
         # r
-        factor[0, 0] = (
-            pre_factor
-            * (CUPY_FLOAT(1) + half_width_factor)
-            * (
-                self._grid.field.epsilon[2:, 1:-1]
-                + self._grid.field.epsilon[1:-1, 1:-1]
-            )
-        )
-        factor[0, 1] = (
-            pre_factor
-            * (CUPY_FLOAT(1) - half_width_factor)
-            * (
-                self._grid.field.epsilon[:-2, 1:-1]
-                + self._grid.field.epsilon[1:-1, 1:-1]
-            )
-        )
-        inv_denominator += factor[0, 0] + factor[0, 1]
+        delta_epsilon = pre_factor * (epsilon[2:, 1:-1] - epsilon[:-2, 1:-1])
+        factor[0, 0] = epsilon_h2 + delta_epsilon + scaled_2hr
+        factor[0, 1] = epsilon_h2 - delta_epsilon - scaled_2hr
         # z
-        factor[1, 0] = pre_factor * (
-            self._grid.field.epsilon[2:, 1:-1] + self._grid.field.epsilon[1:-1, 1:-1]
-        )
-        factor[1, 0] = pre_factor * (
-            self._grid.field.epsilon[:-2, 1:-1] + self._grid.field.epsilon[1:-1, 1:-1]
-        )
-        inv_denominator += factor[1, 0] + factor[1, 1]
-        inv_denominator = CUPY_FLOAT(1) / inv_denominator
+        delta_epsilon = pre_factor * (epsilon[1:-1, 2:] - epsilon[1:-1, :-2])
+        factor[1, 0] = epsilon_h2 + delta_epsilon
+        factor[1, 1] = epsilon_h2 - delta_epsilon
         return factor.astype(CUPY_FLOAT), inv_denominator.astype(CUPY_FLOAT)
 
     def _update_boundary_point(self, phi):
@@ -98,15 +85,41 @@ class PECylinderSolver:
                 index = boundary_data["index"]
                 value = boundary_data["value"]
                 phi.value[index[:, 0], index[:, 1]] = value
-            elif boundary_type == "neumann":
-                self_index = boundary_data["self_index"]
-                neighbor_index = boundary_data["neighbor_index"]
-                value = boundary_data["value"]
-                dist = (neighbor_index - self_index).sum(1).astype(CUPY_FLOAT)
-                dist *= self._grid.grid_width
-                phi.value[self_index[:, 0], self_index[:, 1]] = (
-                    phi.value[neighbor_index[:, 0], neighbor_index[:, 1]] - dist * value
+            elif boundary_type == "z-no-gradient":
+                index = boundary_data["index"]
+                direction = boundary_data["direction"]
+                z_index = (index[:, 0], index[:, 1])
+                z_plus1_index = (index[:, 0], index[:, 1] + direction)
+                z_plus2_index = (index[:, 0], index[:, 1] + direction + direction)
+                phi.value[z_index] = CUPY_FLOAT(1 / 3) * (
+                    CUPY_FLOAT(4) * phi.value[z_plus1_index] - phi.value[z_plus2_index]
                 )
+            elif boundary_type == "r-symmetry":
+                index = boundary_data["index"]
+                direction = boundary_data["direction"]
+                r_index = (index[:, 0], index[:, 1])
+                r_plus1_index = (index[:, 0] + direction, index[:, 1])
+                r_plus2_index = (index[:, 0] + direction + direction, index[:, 1])
+                phi.value[r_index] = CUPY_FLOAT(1 / 3) * (
+                    CUPY_FLOAT(4) * phi.value[r_plus1_index] - phi.value[r_plus2_index]
+                )
+                # z_plus_index = (index[:, 0], index[:, 1] + CUPY_INT(1))
+                # z_minus_index = (index[:, 0], index[:, 1] - CUPY_INT(1))
+                # epsilon = self._grid.field.epsilon
+                # h2 = self._grid.grid_width**2
+                # res = epsilon[r_index] * (
+                #     (CUPY_FLOAT(4 / h2) * phi.value[r_plus1_index])
+                #     + (CUPY_FLOAT(-1 / 2 / h2) * phi.value[r_plus2_index])
+                #     + (CUPY_FLOAT(1 / h2) * phi.value[z_plus_index])
+                #     + (CUPY_FLOAT(1 / h2) * phi.value[z_minus_index])
+                # )
+                # res += (
+                #     CUPY_FLOAT(1 / 4 / h2)
+                #     * (epsilon[z_plus_index] - epsilon[z_minus_index])
+                #     * (phi.value[z_plus_index] - phi.value[z_minus_index])
+                # )
+                # res *= CUPY_FLOAT(1 / (7 / 2 / h2 + 2 / h2))
+                # phi.value[r_index] = res.astype(CUPY_FLOAT)
             else:
                 raise KeyError(
                     "Only dirichlet and neumann boundary condition supported, while %s provided"
@@ -134,6 +147,7 @@ class PECylinderSolver:
         factor, inv_denominator = self._get_coefficient()
         inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
         scaled_rho = self._grid.field.rho[1:-1, 1:-1] * inv_epsilon0
+        print(scaled_rho)
         for iteration in range(num_iterations):
             self._update_boundary_point(self._grid.variable.phi)
             self._update_inner_point(
@@ -147,41 +161,52 @@ class PECylinderSolver:
 
 def get_phi(grid: Grid):
     phi = grid.empty_variable()
-    boundary_type = "neumann"
-    boundary_data = {}
-    boundary_points = (grid.inner_shape[0] + grid.inner_shape[1]) * 2
-    boundary_self_index = cp.zeros([boundary_points, 2], CUPY_INT)
-    boundary_neighbor_index = cp.zeros([boundary_points, 2], CUPY_INT)
+    # R symmetry
     field = grid.zeros_field().astype(CUPY_INT)
-    num_added_points = 0
+    field[0, 1:-1] = 1
+    boundary_index = cp.argwhere(field).astype(CUPY_INT)
+    direction = cp.ones([boundary_index.shape[0]], CUPY_INT)
+    phi.add_boundary(
+        boundary_type="r-symmetry",
+        boundary_data={
+            "index": boundary_index,
+            "direction": direction.astype(CUPY_INT),
+        },
+    )
     field = grid.zeros_field().astype(CUPY_INT)
-    num_added_points = 0
-    for i in range(2):
-        target_slice = [slice(1, -1) for i in range(2)]
-        target_slice[i] = [0, -1]
-        field[tuple(target_slice)] = 1
-        index = cp.argwhere(field).astype(CUPY_INT)
-        num_points = index.shape[0]
-        boundary_self_index[num_added_points : num_added_points + num_points, :] = index
-        field[tuple(target_slice)] = 0
-        target_slice[i] = [1, -2]
-        field[tuple(target_slice)] = 1
-        index = cp.argwhere(field).astype(CUPY_INT)
-        boundary_neighbor_index[
-            num_added_points : num_added_points + num_points, :
-        ] = index
-        field[tuple(target_slice)] = 0
-        num_added_points += num_points
-    if boundary_type == "neumann":
-        boundary_data["self_index"] = boundary_self_index
-        boundary_data["neighbor_index"] = boundary_neighbor_index
-        boundary_data["value"] = (
-            cp.zeros([boundary_self_index.shape[0]], CUPY_FLOAT) + 0.001
-        )
-    elif boundary_type == "dirichlet":
-        boundary_data["index"] = boundary_self_index
-        boundary_data["value"] = cp.zeros([boundary_self_index.shape[0]], CUPY_FLOAT)
-    phi.add_boundary(boundary_type=boundary_type, boundary_data=boundary_data)
+    field[-1, 1:-1] = 1
+    direction *= -1
+    boundary_index = cp.argwhere(field).astype(CUPY_INT)
+    phi.add_boundary(
+        boundary_type="r-symmetry",
+        boundary_data={
+            "index": boundary_index,
+            "direction": direction.astype(CUPY_INT),
+        },
+    )
+    # Z boundary
+    field = grid.zeros_field().astype(CUPY_INT)
+    field[:, 0] = 1
+    boundary_index = cp.argwhere(field).astype(CUPY_INT)
+    direction = cp.ones([boundary_index.shape[0]], CUPY_INT)
+    phi.add_boundary(
+        boundary_type="z-no-gradient",
+        boundary_data={
+            "index": boundary_index,
+            "direction": direction.astype(CUPY_INT),
+        },
+    )
+    field = grid.zeros_field().astype(CUPY_INT)
+    field[:, -1] = 1
+    direction *= -1
+    boundary_index = cp.argwhere(field).astype(CUPY_INT)
+    phi.add_boundary(
+        boundary_type="z-no-gradient",
+        boundary_data={
+            "index": boundary_index,
+            "direction": direction.astype(CUPY_INT),
+        },
+    )
     return phi
 
 
@@ -209,21 +234,20 @@ if __name__ == "__main__":
     grid.add_variable("phi", get_phi(grid))
     grid.add_field("rho", get_rho(grid))
     grid.add_field("epsilon", get_epsilon(grid, r0, z0))
-    solver.iterate(10000)
+    solver.iterate(1500)
 
     fig, ax = plt.subplots(1, 1, figsize=[16, 9])
-    phi = grid.variable.phi.value.get()[1:-1, 1:-1]
+    phi = grid.variable.phi.value.get()
     phi = Quantity(phi, default_energy_unit).convert_to(kilocalorie_permol).value
-    print(phi.max())
-    threshold = 10
-    # phi[phi >= threshold] = threshold
-    # phi[phi <= -threshold] = -threshold
+    print(phi)
+    threshold = 100
+    phi[phi >= threshold] = threshold
+    phi[phi <= -threshold] = -threshold
     # facto, inv_denominator = solver._get_coefficient()
-    # phi = inv_denominator.get() == 0
     # phi = grid.field.rho.get()[1:-1, 1:-1]
-    c = ax.contourf(
-        grid.coordinate.r.get()[1:-1, 1:-1],
-        grid.coordinate.z.get()[1:-1, 1:-1],
+    c = ax.contour(
+        grid.coordinate.r.get(),
+        grid.coordinate.z.get(),
         phi,
         200,
     )
