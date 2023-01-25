@@ -59,23 +59,27 @@ class PECylinderSolver:
         pre_factor = CUPY_FLOAT(1 / 4 / self._grid.grid_width**2)
         epsilon = self._grid.field.epsilon
         epsilon_h2 = inv_h2 * epsilon[1:-1, 1:-1]
-        scaled_2hr = (
-            CUPY_FLOAT(1 / 2 / self._grid.grid_width)
+        scaled_hr = (
+            CUPY_FLOAT(1 / self._grid.grid_width)
             / self._grid.coordinate.r[1:-1, 1:-1]
             * epsilon[1:-1, 1:-1]
         ).astype(CUPY_FLOAT)
+        inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
         # 0 for plus and 1 for minus
         shape = [self._grid.num_dimensions, 2] + self._grid.inner_shape
         factor = cp.zeros(shape, CUPY_FLOAT)
-        inv_denominator = CUPY_FLOAT(0.25) / epsilon_h2
         # r
-        delta_epsilon = pre_factor * (epsilon[2:, 1:-1] - epsilon[:-2, 1:-1])
-        factor[0, 0] = epsilon_h2 + delta_epsilon + scaled_2hr
-        factor[0, 1] = epsilon_h2 - delta_epsilon - scaled_2hr
+        delta_epsilon = inv_h2 * (epsilon[2:, 1:-1] - epsilon[1:-1, 1:-1])
+        factor[0, 0] = epsilon_h2 + delta_epsilon + scaled_hr
+        factor[0, 1] = epsilon_h2
+        inv_denominator += scaled_hr + delta_epsilon
         # z
-        delta_epsilon = pre_factor * (epsilon[1:-1, 2:] - epsilon[1:-1, :-2])
+        delta_epsilon = inv_h2 * (epsilon[1:-1, 2:] - epsilon[1:-1, 1:-1])
         factor[1, 0] = epsilon_h2 + delta_epsilon
-        factor[1, 1] = epsilon_h2 - delta_epsilon
+        factor[1, 1] = epsilon_h2
+        inv_denominator += delta_epsilon
+        inv_denominator += epsilon_h2 * CUPY_FLOAT(4)
+        inv_denominator = CUPY_FLOAT(1) / inv_denominator
         return factor.astype(CUPY_FLOAT), inv_denominator.astype(CUPY_FLOAT)
 
     def _update_boundary_point(self, phi):
@@ -215,7 +219,7 @@ def get_rho(grid: Grid):
     charge = -1 / grid.grid_width**grid.num_dimensions
     half_z = grid.coordinate.z.shape[1] // 2
     rho[10, half_z + 20] = charge
-    rho[10, half_z - 20] = -charge
+    # rho[10, half_z - 20] = -charge
     return rho
 
 
@@ -228,13 +232,13 @@ def get_epsilon(grid: Grid, r0, z0):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    r0, z0 = 30, 20
+    r0, z0 = 10, 20
     grid = Grid(grid_width=0.25, r=[0, 50], z=[-50, 50])
     solver = PECylinderSolver(grid=grid)
     grid.add_variable("phi", get_phi(grid))
     grid.add_field("rho", get_rho(grid))
     grid.add_field("epsilon", get_epsilon(grid, r0, z0))
-    solver.iterate(1500)
+    solver.iterate(5000)
 
     fig, ax = plt.subplots(1, 1, figsize=[16, 9])
     phi = grid.variable.phi.value.get()
