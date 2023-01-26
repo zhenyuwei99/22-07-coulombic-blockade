@@ -69,15 +69,15 @@ class PECylinderSolver:
         shape = [self._grid.num_dimensions, 2] + self._grid.inner_shape
         factor = cp.zeros(shape, CUPY_FLOAT)
         # r
-        delta_epsilon = inv_h2 * (epsilon[2:, 1:-1] - epsilon[1:-1, 1:-1])
-        factor[0, 0] = epsilon_h2 + delta_epsilon + scaled_hr
-        factor[0, 1] = epsilon_h2
-        inv_denominator += scaled_hr + delta_epsilon
+        delta_epsilon = inv_h2 * (epsilon[1:-1, 1:-1] - epsilon[:-2, 1:-1])
+        factor[0, 0] = epsilon_h2
+        factor[0, 1] = epsilon_h2 - delta_epsilon - scaled_hr
+        inv_denominator -= scaled_hr + delta_epsilon
         # z
-        delta_epsilon = inv_h2 * (epsilon[1:-1, 2:] - epsilon[1:-1, 1:-1])
-        factor[1, 0] = epsilon_h2 + delta_epsilon
-        factor[1, 1] = epsilon_h2
-        inv_denominator += delta_epsilon
+        delta_epsilon = inv_h2 * (epsilon[1:-1, 1:-1] - epsilon[1:-1, :-2])
+        factor[1, 0] = epsilon_h2
+        factor[1, 1] = epsilon_h2 - delta_epsilon
+        inv_denominator -= delta_epsilon
         inv_denominator += epsilon_h2 * CUPY_FLOAT(4)
         inv_denominator = CUPY_FLOAT(1) / inv_denominator
         return factor.astype(CUPY_FLOAT), inv_denominator.astype(CUPY_FLOAT)
@@ -107,23 +107,6 @@ class PECylinderSolver:
                 phi.value[r_index] = CUPY_FLOAT(1 / 3) * (
                     CUPY_FLOAT(4) * phi.value[r_plus1_index] - phi.value[r_plus2_index]
                 )
-                # z_plus_index = (index[:, 0], index[:, 1] + CUPY_INT(1))
-                # z_minus_index = (index[:, 0], index[:, 1] - CUPY_INT(1))
-                # epsilon = self._grid.field.epsilon
-                # h2 = self._grid.grid_width**2
-                # res = epsilon[r_index] * (
-                #     (CUPY_FLOAT(4 / h2) * phi.value[r_plus1_index])
-                #     + (CUPY_FLOAT(-1 / 2 / h2) * phi.value[r_plus2_index])
-                #     + (CUPY_FLOAT(1 / h2) * phi.value[z_plus_index])
-                #     + (CUPY_FLOAT(1 / h2) * phi.value[z_minus_index])
-                # )
-                # res += (
-                #     CUPY_FLOAT(1 / 4 / h2)
-                #     * (epsilon[z_plus_index] - epsilon[z_minus_index])
-                #     * (phi.value[z_plus_index] - phi.value[z_minus_index])
-                # )
-                # res *= CUPY_FLOAT(1 / (7 / 2 / h2 + 2 / h2))
-                # phi.value[r_index] = res.astype(CUPY_FLOAT)
             else:
                 raise KeyError(
                     "Only dirichlet and neumann boundary condition supported, while %s provided"
@@ -189,56 +172,82 @@ def get_phi(grid: Grid):
         },
     )
     # Z boundary
+    # field = grid.zeros_field().astype(CUPY_INT)
+    # field[:, 0] = 1
+    # boundary_index = cp.argwhere(field).astype(CUPY_INT)
+    # direction = cp.ones([boundary_index.shape[0]], CUPY_INT)
+    # phi.add_boundary(
+    #     boundary_type="z-no-gradient",
+    #     boundary_data={
+    #         "index": boundary_index,
+    #         "direction": direction.astype(CUPY_INT),
+    #     },
+    # )
+    # field = grid.zeros_field().astype(CUPY_INT)
+    # field[:, -1] = 1
+    # direction *= -1
+    # boundary_index = cp.argwhere(field).astype(CUPY_INT)
+    # phi.add_boundary(
+    #     boundary_type="z-no-gradient",
+    #     boundary_data={
+    #         "index": boundary_index,
+    #         "direction": direction.astype(CUPY_INT),
+    #     },
+    # )
+
     field = grid.zeros_field().astype(CUPY_INT)
     field[:, 0] = 1
     boundary_index = cp.argwhere(field).astype(CUPY_INT)
-    direction = cp.ones([boundary_index.shape[0]], CUPY_INT)
+    value = (
+        cp.zeros([boundary_index.shape[0]])
+        + Quantity(1, volt).convert_to(default_energy_unit / default_charge_unit).value
+    )
     phi.add_boundary(
-        boundary_type="z-no-gradient",
+        boundary_type="dirichlet",
         boundary_data={
             "index": boundary_index,
-            "direction": direction.astype(CUPY_INT),
+            "value": value.astype(CUPY_FLOAT),
         },
     )
     field = grid.zeros_field().astype(CUPY_INT)
     field[:, -1] = 1
-    direction *= -1
+    value = cp.zeros([boundary_index.shape[0]])
     boundary_index = cp.argwhere(field).astype(CUPY_INT)
     phi.add_boundary(
-        boundary_type="z-no-gradient",
+        boundary_type="dirichlet",
         boundary_data={
             "index": boundary_index,
-            "direction": direction.astype(CUPY_INT),
+            "value": value.astype(CUPY_FLOAT),
         },
     )
     return phi
 
 
-def get_rho(grid: Grid):
+def get_rho(grid: Grid, r0=5, z0=0):
     rho = grid.zeros_field()
     charge = -1 / grid.grid_width**grid.num_dimensions
-    half_z = grid.coordinate.z.shape[1] // 2
-    rho[10, half_z + 20] = charge
-    # rho[10, half_z - 20] = -charge
+    dist = (grid.coordinate.r - r0) ** 2 + (grid.coordinate.z - z0) ** 2
+    sigma = grid.grid_width / 3
+    rho = cp.exp(-dist / (2 * sigma**2)) * charge
     return rho
 
 
 def get_epsilon(grid: Grid, r0, z0):
     epsilon = grid.ones_field() * CUPY_FLOAT(78)
     epsilon[(grid.coordinate.r >= r0) & (cp.abs(grid.coordinate.z) <= z0)] = 2
-    return epsilon
+    return epsilon.astype(CUPY_FLOAT)
 
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    r0, z0 = 10, 20
-    grid = Grid(grid_width=0.25, r=[0, 50], z=[-50, 50])
+    r0, z0 = 10, 50
+    grid = Grid(grid_width=0.25, r=[0, 50], z=[-100, 100])
     solver = PECylinderSolver(grid=grid)
     grid.add_variable("phi", get_phi(grid))
     grid.add_field("rho", get_rho(grid))
     grid.add_field("epsilon", get_epsilon(grid, r0, z0))
-    solver.iterate(5000)
+    solver.iterate(10000)
 
     fig, ax = plt.subplots(1, 1, figsize=[16, 9])
     phi = grid.variable.phi.value.get()
@@ -247,8 +256,6 @@ if __name__ == "__main__":
     threshold = 100
     phi[phi >= threshold] = threshold
     phi[phi <= -threshold] = -threshold
-    # facto, inv_denominator = solver._get_coefficient()
-    # phi = grid.field.rho.get()[1:-1, 1:-1]
     c = ax.contour(
         grid.coordinate.r.get(),
         grid.coordinate.z.get(),
