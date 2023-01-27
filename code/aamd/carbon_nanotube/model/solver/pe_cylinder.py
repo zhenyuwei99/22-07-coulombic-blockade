@@ -183,35 +183,6 @@ class PECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def _update_r_symmetry_point(self, index, direction):
-        data, row, col = [], [], []
-        z_shape = CUPY_INT(self._grid.shape[1])
-        size = CUPY_INT(index.shape[0])
-        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
-        # r+1
-        col_index = row_index + direction * z_shape
-        data.append(cp.zeros(size) + 4)
-        col.append(col_index)
-        row.append(row_index)
-        # r+2
-        col_index = row_index + direction * (z_shape * CUPY_INT(2))
-        data.append(cp.zeros(size) - 1)
-        col.append(col_index)
-        row.append(row_index)
-        # self
-        data.append(cp.zeros(size) - 3)
-        col.append(row_index)
-        row.append(row_index)
-        # Vector
-        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        # Return
-        return (
-            cp.hstack(data).astype(CUPY_FLOAT),
-            cp.hstack(row).astype(CUPY_INT),
-            cp.hstack(col).astype(CUPY_INT),
-            vector.astype(CUPY_FLOAT),
-        )
-
     def iterate(self, num_iterations, is_restart=True):
         self._grid.check_requirement()
         if is_restart:
