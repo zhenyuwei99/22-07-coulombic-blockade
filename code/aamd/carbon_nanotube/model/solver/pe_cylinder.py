@@ -34,11 +34,11 @@ class PECylinderSolver:
         - phi: Electric potential
             - inner: Inner points
             - dirichlet: Dirichlet point
-                - index, value required
+                - `index`, `value` required
             - no-gradient: dphi/dz = 0
-                - index, dimension, direction required.
-                - dimension: r=0, z=1
-                - direction: the index difference between neighbor
+                - `index`, `dimension`, `direction` required.
+                - `dimension`: r=0, z=1
+                - `direction`: the index difference between neighbor
 
         ### Field:
         - epsilon: Relative permittivity
@@ -103,24 +103,20 @@ class PECylinderSolver:
         delta_epsilon_r = inv_h2 * (
             epsilon[index[:, 0] + 1, index[:, 1]] - epsilon[index_tuple]
         )
-        col_index = row_index + z_shape
         data.append(epsilon_h2 + delta_epsilon_r + scaled_hr)
-        col.append(col_index)
+        col.append(row_index + z_shape)
         # r-1
-        col_index = row_index - z_shape
         data.append(epsilon_h2)
-        col.append(col_index)
+        col.append(row_index - z_shape)
         # z+1
         delta_epsilon_z = inv_h2 * (
             epsilon[index[:, 0], index[:, 1] + 1] - epsilon[index_tuple]
         )
-        col_index = row_index + 1
         data.append(epsilon_h2 + delta_epsilon_z)
-        col.append(col_index)
+        col.append(row_index + 1)
         # z-1
-        col_index = row_index - 1
         data.append(epsilon_h2)
-        col.append(col_index)
+        col.append(row_index - 1)
         # Self
         data.append(
             -delta_epsilon_r - scaled_hr - delta_epsilon_z - epsilon_h2 * CUPY_FLOAT(4)
@@ -160,14 +156,12 @@ class PECylinderSolver:
         offset = (direction * (CUPY_INT(1) - dimension) * z_shape).astype(CUPY_INT)
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
         # +1
-        col_index = row_index + offset
         data.append(cp.zeros(size) + 4)
-        col.append(col_index)
+        col.append(row_index + offset)
         row.append(row_index)
         # +2
-        col_index = row_index + offset + offset
         data.append(cp.zeros(size) - 1)
-        col.append(col_index)
+        col.append(row_index + offset + offset)
         row.append(row_index)
         # self
         data.append(cp.zeros(size) - 3)
