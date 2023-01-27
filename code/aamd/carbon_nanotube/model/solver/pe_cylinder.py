@@ -12,7 +12,8 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 import os
 import sys
 import cupy as cp
-import numba.cuda
+import cupyx.scipy.sparse as sp
+import cupyx.scipy.sparse.linalg as spl
 from mdpy.core import Grid
 from mdpy.environment import *
 from mdpy.unit import *
@@ -31,12 +32,14 @@ class PECylinderSolver:
 
         ### Variable:
         - phi: Electric potential
-            - dirichlet: Dirichlet boundary condition
+            - inner: Inner points
+            - dirichlet: Dirichlet point
                 - index, value required
-            - z-no-gradient: dphi/dz = 0
-                - index, direction required. Direction is the index difference between neighbor
-            - r-symmetry: dphi/dr = 0
-                - index, direction required.
+            - no-gradient: dphi/dz = 0
+                - index, dimension, direction required.
+                - dimension: r=0, z=1
+                - direction: the index difference between neighbor
+
         ### Field:
         - epsilon: Relative permittivity
         - rho: charge density
@@ -53,173 +56,230 @@ class PECylinderSolver:
             default_charge_unit**2 / (default_energy_unit * default_length_unit)
         ).value
         self._grid.add_constant("epsilon0", epsilon0)
+        # Mapping of function
+        self._func_map = {
+            "inner": self._get_inner_points,
+            "dirichlet": self._get_dirichlet_points,
+            "no-gradient": self._get_no_gradient_points,
+        }
 
-    def _get_coefficient(self):
-        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
-        pre_factor = CUPY_FLOAT(1 / 4 / self._grid.grid_width**2)
+    def _get_equation(self, phi):
+        data, row, col = [], [], []
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        for key, val in phi.points.items():
+            cur_data, cur_row, cur_col, cur_vector = self._func_map[key](**val)
+            data.append(cur_data)
+            row.append(cur_row)
+            col.append(cur_col)
+            vector += cur_vector
+        # Matrix
+        data = cp.hstack(data).astype(CUPY_FLOAT)
+        row = cp.hstack(row).astype(CUPY_INT)
+        col = cp.hstack(col).astype(CUPY_INT)
+        matrix = sp.coo_matrix(
+            (data, (row, col)),
+            shape=(self._grid.num_points, self._grid.num_points),
+            dtype=CUPY_FLOAT,
+        )
+        # Return
+        return matrix.tocsr(), vector.astype(CUPY_FLOAT)
+
+    def _get_inner_points(self, index):
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
         epsilon = self._grid.field.epsilon
-        epsilon_h2 = inv_h2 * epsilon[1:-1, 1:-1]
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
+        index_tuple = (index[:, 0], index[:, 1])
+        epsilon_h2 = inv_h2 * epsilon[index_tuple]
         scaled_hr = (
             CUPY_FLOAT(1 / self._grid.grid_width)
-            / self._grid.coordinate.r[1:-1, 1:-1]
-            * epsilon[1:-1, 1:-1]
+            / self._grid.coordinate.r[index_tuple]
+            * epsilon[index_tuple]
         ).astype(CUPY_FLOAT)
-        inv_denominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        # 0 for plus and 1 for minus
-        shape = [self._grid.num_dimensions, 2] + self._grid.inner_shape
-        factor = cp.zeros(shape, CUPY_FLOAT)
-        # r
-        delta_epsilon = inv_h2 * (epsilon[1:-1, 1:-1] - epsilon[:-2, 1:-1])
-        factor[0, 0] = epsilon_h2
-        factor[0, 1] = epsilon_h2 - delta_epsilon - scaled_hr
-        inv_denominator -= scaled_hr + delta_epsilon
-        # z
-        delta_epsilon = inv_h2 * (epsilon[1:-1, 1:-1] - epsilon[1:-1, :-2])
-        factor[1, 0] = epsilon_h2
-        factor[1, 1] = epsilon_h2 - delta_epsilon
-        inv_denominator -= delta_epsilon
-        inv_denominator += epsilon_h2 * CUPY_FLOAT(4)
-        inv_denominator = CUPY_FLOAT(1) / inv_denominator
-        return factor.astype(CUPY_FLOAT), inv_denominator.astype(CUPY_FLOAT)
-
-    def _update_boundary_point(self, phi):
-        for boundary_type, boundary_data in phi.boundary.items():
-            boundary_type = boundary_type.lower()
-            if boundary_type == "dirichlet":
-                index = boundary_data["index"]
-                value = boundary_data["value"]
-                phi.value[index[:, 0], index[:, 1]] = value
-            elif boundary_type == "z-no-gradient":
-                index = boundary_data["index"]
-                direction = boundary_data["direction"]
-                z_index = (index[:, 0], index[:, 1])
-                z_plus1_index = (index[:, 0], index[:, 1] + direction)
-                z_plus2_index = (index[:, 0], index[:, 1] + direction + direction)
-                phi.value[z_index] = CUPY_FLOAT(1 / 3) * (
-                    CUPY_FLOAT(4) * phi.value[z_plus1_index] - phi.value[z_plus2_index]
-                )
-            elif boundary_type == "r-symmetry":
-                index = boundary_data["index"]
-                direction = boundary_data["direction"]
-                r_index = (index[:, 0], index[:, 1])
-                r_plus1_index = (index[:, 0] + direction, index[:, 1])
-                r_plus2_index = (index[:, 0] + direction + direction, index[:, 1])
-                phi.value[r_index] = CUPY_FLOAT(1 / 3) * (
-                    CUPY_FLOAT(4) * phi.value[r_plus1_index] - phi.value[r_plus2_index]
-                )
-            else:
-                raise KeyError(
-                    "Only dirichlet and neumann boundary condition supported, while %s provided"
-                    % boundary_type
-                )
-
-    def _update_inner_point(self, phi, factor, inv_denominator, scaled_rho, soa_factor):
-        factor_a, factor_b = CUPY_FLOAT(soa_factor), CUPY_FLOAT(1 - soa_factor)
-        nominator = cp.zeros(self._grid.inner_shape, CUPY_FLOAT)
-        # r
-        nominator += factor[0, 0] * phi.value[2:, 1:-1]
-        nominator += factor[0, 1] * phi.value[:-2, 1:-1]
-        # z
-        nominator += factor[1, 0] * phi.value[1:-1, 2:]
-        nominator += factor[1, 1] * phi.value[1:-1, :-2]
-        # Add charge
-        nominator += scaled_rho
-        # Update
-        phi.value[1:-1, 1:-1] = (
-            factor_a * phi.value[1:-1, 1:-1] + factor_b * nominator * inv_denominator
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        for i in range(5):
+            row.append(row_index)
+        # r+1
+        delta_epsilon_r = inv_h2 * (
+            epsilon[index[:, 0] + 1, index[:, 1]] - epsilon[index_tuple]
+        )
+        col_index = row_index + z_shape
+        data.append(epsilon_h2 + delta_epsilon_r + scaled_hr)
+        col.append(col_index)
+        # r-1
+        col_index = row_index - z_shape
+        data.append(epsilon_h2)
+        col.append(col_index)
+        # z+1
+        delta_epsilon_z = inv_h2 * (
+            epsilon[index[:, 0], index[:, 1] + 1] - epsilon[index_tuple]
+        )
+        col_index = row_index + 1
+        data.append(epsilon_h2 + delta_epsilon_z)
+        col.append(col_index)
+        # z-1
+        col_index = row_index - 1
+        data.append(epsilon_h2)
+        col.append(col_index)
+        # Self
+        data.append(
+            -delta_epsilon_r - scaled_hr - delta_epsilon_z - epsilon_h2 * CUPY_FLOAT(4)
+        )
+        col.append(row_index)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        inv_epsilon = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
+        vector[row_index] = -self._grid.field.rho[index_tuple] * inv_epsilon
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
         )
 
-    def iterate(self, num_iterations, soa_factor=0.01):
+    def _get_dirichlet_points(self, index, value):
+        z_shape = CUPY_INT(self._grid.shape[1])
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        size = CUPY_INT(index.shape[0])
+        data = cp.ones(size, CUPY_FLOAT)
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        vector[row_index] = value
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row_index).astype(CUPY_INT),
+            cp.hstack(row_index).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
+
+    def _get_no_gradient_points(self, index, dimension, direction):
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
+        size = CUPY_INT(index.shape[0])
+        # dimension = 0 radius offset need multiple z_shape
+        offset = (direction * (CUPY_INT(1) - dimension) * z_shape).astype(CUPY_INT)
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        # +1
+        col_index = row_index + offset
+        data.append(cp.zeros(size) + 4)
+        col.append(col_index)
+        row.append(row_index)
+        # +2
+        col_index = row_index + offset + offset
+        data.append(cp.zeros(size) - 1)
+        col.append(col_index)
+        row.append(row_index)
+        # self
+        data.append(cp.zeros(size) - 3)
+        col.append(row_index)
+        row.append(row_index)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
+
+    def _update_r_symmetry_point(self, index, direction):
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
+        size = CUPY_INT(index.shape[0])
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        # r+1
+        col_index = row_index + direction * z_shape
+        data.append(cp.zeros(size) + 4)
+        col.append(col_index)
+        row.append(row_index)
+        # r+2
+        col_index = row_index + direction * (z_shape * CUPY_INT(2))
+        data.append(cp.zeros(size) - 1)
+        col.append(col_index)
+        row.append(row_index)
+        # self
+        data.append(cp.zeros(size) - 3)
+        col.append(row_index)
+        row.append(row_index)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
+
+    def iterate(self, num_iterations, is_restart=True):
         self._grid.check_requirement()
-        factor, inv_denominator = self._get_coefficient()
-        inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
-        scaled_rho = self._grid.field.rho[1:-1, 1:-1] * inv_epsilon0
-        print(scaled_rho)
-        for iteration in range(num_iterations):
-            self._update_boundary_point(self._grid.variable.phi)
-            self._update_inner_point(
-                phi=self._grid.variable.phi,
-                factor=factor,
-                inv_denominator=inv_denominator,
-                scaled_rho=scaled_rho,
-                soa_factor=soa_factor,
-            )
+        if is_restart:
+            self._matrix, self._vector = self._get_equation(self._grid.variable.phi)
+        x0 = self._grid.variable.phi.value.reshape(self._grid.num_points)
+        res, info = spl.gmres(
+            self._matrix,
+            self._vector,
+            x0=x0,
+            maxiter=num_iterations,
+            restart=200,
+        )
+        self._grid.variable.phi.value = res.reshape(self._grid.shape)
 
 
 def get_phi(grid: Grid):
     phi = grid.empty_variable()
-    # R symmetry
+    # Inner
     field = grid.zeros_field().astype(CUPY_INT)
+    field[1:-1, 1:-1] = 1
+    index = cp.argwhere(field).astype(CUPY_INT)
+    phi.register_points(
+        type="inner",
+        index=index,
+    )
+    # no-gradient
+    field = grid.zeros_field(CUPY_INT)
+    dimension = grid.zeros_field(CUPY_INT)
+    direction = grid.zeros_field(CUPY_INT)
+    # left
     field[0, 1:-1] = 1
-    boundary_index = cp.argwhere(field).astype(CUPY_INT)
-    direction = cp.ones([boundary_index.shape[0]], CUPY_INT)
-    phi.add_boundary(
-        boundary_type="r-symmetry",
-        boundary_data={
-            "index": boundary_index,
-            "direction": direction.astype(CUPY_INT),
-        },
-    )
-    field = grid.zeros_field().astype(CUPY_INT)
-    field[-1, 1:-1] = 1
-    direction *= -1
-    boundary_index = cp.argwhere(field).astype(CUPY_INT)
-    phi.add_boundary(
-        boundary_type="r-symmetry",
-        boundary_data={
-            "index": boundary_index,
-            "direction": direction.astype(CUPY_INT),
-        },
-    )
-    # Z boundary
+    dimension[0, 1:-1] = 0
+    direction[0, 1:-1] = 1
+    # right
+    field[-1, 1:-1] = 2
+    dimension[-1, 1:-1] = 0
+    direction[-1, 1:-1] = -1
+    # down
+    field[:, 0] = 3  # down
+    dimension[:, 0] = 1
+    direction[:, 0] = 1
+    # up
+    field[:, -1] = 4  # down
+    dimension[:, -1] = 1
+    direction[:, -1] = -1
+    for i in [1, 2, 3, 4]:
+        index = cp.argwhere(field == i).astype(CUPY_INT)
+        index_tuple = (index[:, 0], index[:, 1])
+        phi.register_points(
+            type="no-gradient",
+            index=index,
+            dimension=dimension[index_tuple].astype(CUPY_INT),
+            direction=direction[index_tuple].astype(CUPY_INT),
+        )
+
     # field = grid.zeros_field().astype(CUPY_INT)
     # field[:, 0] = 1
-    # boundary_index = cp.argwhere(field).astype(CUPY_INT)
-    # direction = cp.ones([boundary_index.shape[0]], CUPY_INT)
-    # phi.add_boundary(
-    #     boundary_type="z-no-gradient",
-    #     boundary_data={
-    #         "index": boundary_index,
-    #         "direction": direction.astype(CUPY_INT),
-    #     },
+    # index = cp.argwhere(field).astype(CUPY_INT)
+    # value = (
+    #     cp.zeros([index.shape[0]])
+    #     + Quantity(1, volt).convert_to(default_energy_unit / default_charge_unit).value
     # )
+    # phi.register_points(type="dirichlet", index=index, value=value.astype(CUPY_FLOAT))
     # field = grid.zeros_field().astype(CUPY_INT)
     # field[:, -1] = 1
-    # direction *= -1
-    # boundary_index = cp.argwhere(field).astype(CUPY_INT)
-    # phi.add_boundary(
-    #     boundary_type="z-no-gradient",
-    #     boundary_data={
-    #         "index": boundary_index,
-    #         "direction": direction.astype(CUPY_INT),
-    #     },
-    # )
-
-    field = grid.zeros_field().astype(CUPY_INT)
-    field[:, 0] = 1
-    boundary_index = cp.argwhere(field).astype(CUPY_INT)
-    value = (
-        cp.zeros([boundary_index.shape[0]])
-        + Quantity(1, volt).convert_to(default_energy_unit / default_charge_unit).value
-    )
-    phi.add_boundary(
-        boundary_type="dirichlet",
-        boundary_data={
-            "index": boundary_index,
-            "value": value.astype(CUPY_FLOAT),
-        },
-    )
-    field = grid.zeros_field().astype(CUPY_INT)
-    field[:, -1] = 1
-    value = cp.zeros([boundary_index.shape[0]])
-    boundary_index = cp.argwhere(field).astype(CUPY_INT)
-    phi.add_boundary(
-        boundary_type="dirichlet",
-        boundary_data={
-            "index": boundary_index,
-            "value": value.astype(CUPY_FLOAT),
-        },
-    )
+    # index = cp.argwhere(field).astype(CUPY_INT)
+    # value = cp.zeros([index.shape[0]])
+    # phi.register_points(type="dirichlet", index=index, value=value.astype(CUPY_FLOAT))
     return phi
 
 
@@ -239,28 +299,39 @@ def get_epsilon(grid: Grid, r0, z0):
 
 
 if __name__ == "__main__":
+    import time
     import matplotlib.pyplot as plt
 
-    r0, z0 = 10, 50
+    r0, z0 = 10, 25
     grid = Grid(grid_width=0.25, r=[0, 50], z=[-100, 100])
     solver = PECylinderSolver(grid=grid)
     grid.add_variable("phi", get_phi(grid))
     grid.add_field("rho", get_rho(grid))
     grid.add_field("epsilon", get_epsilon(grid, r0, z0))
-    solver.iterate(10000)
 
-    fig, ax = plt.subplots(1, 1, figsize=[16, 9])
+    s = time.time()
+    solver.iterate(6000)
     phi = grid.variable.phi.value.get()
     phi = Quantity(phi, default_energy_unit).convert_to(kilocalorie_permol).value
-    print(phi)
-    threshold = 100
+    e = time.time()
+    print("Run xxx for %s s" % (e - s))
+
+    s = time.time()
+    solver.iterate(6000, False)
+    phi = grid.variable.phi.value.get()
+    phi = Quantity(phi, default_energy_unit).convert_to(kilocalorie_permol).value
+    e = time.time()
+    print("Run xxx for %s s" % (e - s))
+
+    fig, ax = plt.subplots(1, 1, figsize=[16, 9])
+    threshold = 200
     phi[phi >= threshold] = threshold
     phi[phi <= -threshold] = -threshold
     c = ax.contour(
         grid.coordinate.r.get(),
         grid.coordinate.z.get(),
         phi,
-        200,
+        500,
     )
     fig.colorbar(c)
     plt.show()
