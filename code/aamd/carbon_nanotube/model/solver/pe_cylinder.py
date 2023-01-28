@@ -39,6 +39,8 @@ class PECylinderSolver:
                 - `index`, `dimension`, `direction` required.
                 - `dimension`: r=0, z=1
                 - `direction`: the index difference between neighbor
+            - axial-symmetry: boundary point for r=0
+                - `index` required
 
         ### Field:
         - epsilon: Relative permittivity
@@ -61,6 +63,7 @@ class PECylinderSolver:
             "inner": self._get_inner_points,
             "dirichlet": self._get_dirichlet_points,
             "no-gradient": self._get_no_gradient_points,
+            "axial-symmetry": self._get_axial_symmetry_points,
         }
 
     def _get_equation(self, phi):
@@ -88,44 +91,40 @@ class PECylinderSolver:
         data, row, col = [], [], []
         z_shape = CUPY_INT(self._grid.shape[1])
         epsilon = self._grid.field.epsilon
-        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
-        index_tuple = (index[:, 0], index[:, 1])
-        epsilon_h2 = inv_h2 * epsilon[index_tuple]
+        self_index = (index[:, 0], index[:, 1])
+        epsilon_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2) * epsilon
         scaled_hr = (
             CUPY_FLOAT(1 / self._grid.grid_width)
-            / self._grid.coordinate.r[index_tuple]
-            * epsilon[index_tuple]
+            / self._grid.coordinate.r[self_index]
+            * epsilon[self_index]
         ).astype(CUPY_FLOAT)
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
         for i in range(5):
             row.append(row_index)
         # r+1
-        delta_epsilon_r = inv_h2 * (
-            epsilon[index[:, 0] + 1, index[:, 1]] - epsilon[index_tuple]
-        )
-        data.append(epsilon_h2 + delta_epsilon_r + scaled_hr)
+        data.append(epsilon_h2[index[:, 0] + 1, index[:, 1]] + scaled_hr)
         col.append(row_index + z_shape)
         # r-1
-        data.append(epsilon_h2)
+        data.append(epsilon_h2[self_index])
         col.append(row_index - z_shape)
         # z+1
-        delta_epsilon_z = inv_h2 * (
-            epsilon[index[:, 0], index[:, 1] + 1] - epsilon[index_tuple]
-        )
-        data.append(epsilon_h2 + delta_epsilon_z)
+        data.append(epsilon_h2[index[:, 0], index[:, 1] + 1])
         col.append(row_index + 1)
         # z-1
-        data.append(epsilon_h2)
+        data.append(epsilon_h2[self_index])
         col.append(row_index - 1)
         # Self
         data.append(
-            -delta_epsilon_r - scaled_hr - delta_epsilon_z - epsilon_h2 * CUPY_FLOAT(4)
+            -epsilon_h2[index[:, 0] + 1, index[:, 1]]
+            - epsilon_h2[index[:, 0], index[:, 1] + 1]
+            - scaled_hr
+            - epsilon_h2[self_index] * CUPY_FLOAT(2)
         )
         col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        inv_epsilon = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
-        vector[row_index] = -self._grid.field.rho[index_tuple] * inv_epsilon
+        inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
+        vector[row_index] = -self._grid.field.rho[self_index] * inv_epsilon0
         # Return
         return (
             cp.hstack(data).astype(CUPY_FLOAT),
@@ -151,24 +150,77 @@ class PECylinderSolver:
     def _get_no_gradient_points(self, index, dimension, direction):
         data, row, col = [], [], []
         z_shape = CUPY_INT(self._grid.shape[1])
-        size = CUPY_INT(index.shape[0])
-        # dimension = 0 radius offset need multiple z_shape
-        offset = (direction * (CUPY_INT(1) - dimension) * z_shape).astype(CUPY_INT)
+        epsilon = self._grid.field.epsilon
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
+        self_index = (index[:, 0], index[:, 1])
+        epsilon_h2 = inv_h2 * epsilon
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
-        # +1
-        data.append(cp.zeros(size) + 4)
+        for i in range(5):
+            row.append(row_index)
+        # +1 offset in the same direction. 0 offset z_shape, 1 offset 1
+        offset = (CUPY_INT(1) - dimension) * z_shape + dimension
+        offset = (offset * direction).astype(CUPY_INT)
+        data.append(epsilon_h2[self_index] * CUPY_FLOAT(4))
         col.append(row_index + offset)
-        row.append(row_index)
         # +2
-        data.append(cp.zeros(size) - 1)
+        data.append(epsilon_h2[self_index] * CUPY_FLOAT(-0.5))
         col.append(row_index + offset + offset)
-        row.append(row_index)
+        # +1 offset in the different direction. 0 offset 1, 1 offset z_shape
+        offset = (CUPY_INT(1) - dimension + dimension * z_shape).astype(CUPY_INT)
+        # if dimension = 0 index[:, 0] unchanged but index[:, 1] change
+        neighbor_index = (index[:, 0] + dimension, index[:, 1] + (1 - dimension))
+        data.append(epsilon_h2[neighbor_index])
+        col.append(row_index + offset)
+        # -1
+        data.append(epsilon_h2[self_index])
+        col.append(row_index - offset)
         # self
-        data.append(cp.zeros(size) - 3)
+        data.append(
+            epsilon_h2[self_index] * CUPY_FLOAT(-5) - epsilon_h2[neighbor_index]
+        )
         col.append(row_index)
-        row.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
+        vector[row_index] = -self._grid.field.rho[self_index] * inv_epsilon0
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
+
+    def _get_axial_symmetry_points(self, index):
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
+        epsilon = self._grid.field.epsilon
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
+        self_index = (index[:, 0], index[:, 1])
+        epsilon_h2 = inv_h2 * epsilon
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        for i in range(5):
+            row.append(row_index)
+        # r+1
+        epsilon_h2x8 = epsilon_h2[self_index] * CUPY_FLOAT(8)
+        data.append(epsilon_h2x8)
+        col.append(row_index + z_shape)
+        # r+2
+        data.append(-epsilon_h2[self_index])
+        col.append(row_index + CUPY_INT(2 * z_shape))
+        # z+1
+        data.append(epsilon_h2[index[:, 0], index[:, 1] + CUPY_INT(1)])
+        col.append(row_index + 1)
+        # z-1
+        data.append(epsilon_h2[self_index])
+        col.append(row_index - 1)
+        # Self
+        data.append(-epsilon_h2[index[:, 0], index[:, 1] + CUPY_INT(1)] - epsilon_h2x8)
+        col.append(row_index)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
+        vector[row_index] = -self._grid.field.rho[self_index] * inv_epsilon0
         # Return
         return (
             cp.hstack(data).astype(CUPY_FLOAT),
@@ -182,69 +234,62 @@ class PECylinderSolver:
         if is_restart:
             self._matrix, self._vector = self._get_equation(self._grid.variable.phi)
         x0 = self._grid.variable.phi.value.reshape(self._grid.num_points)
-        res, info = spl.gmres(
-            self._matrix,
-            self._vector,
-            x0=x0,
-            maxiter=num_iterations,
-            restart=200,
-        )
+        # res, info = spl.gmres(
+        #     self._matrix,
+        #     self._vector,
+        #     # x0=x0,
+        #     maxiter=num_iterations,
+        #     restart=50,
+        # )
+        res = spl.lsqr(self._matrix, self._vector)[0]
         self._grid.variable.phi.value = res.reshape(self._grid.shape)
 
 
 def get_phi(grid: Grid):
     phi = grid.empty_variable()
+    voltage = (
+        Quantity(0.5, volt * elementary_charge).convert_to(default_energy_unit).value
+    )
+    field = (grid.zeros_field() - 1).astype(CUPY_INT)
+    value = grid.zeros_field().astype(CUPY_FLOAT)
+    dimension = grid.zeros_field().astype(CUPY_INT)
+    direction = grid.zeros_field().astype(CUPY_INT)
+    # 0: inner; 1: dirichlet; 2: no-gradient; 3: axial-symmetry
     # Inner
-    field = grid.zeros_field().astype(CUPY_INT)
-    field[1:-1, 1:-1] = 1
+    field[1:-1, 1:-1] = 0
     index = cp.argwhere(field).astype(CUPY_INT)
+    # Dirichlet
+    field[:, 0] = 1  # down
+    value[:, 0] = voltage * -0.5
+    field[:, -1] = 1  # up
+    value[:, -1] = voltage * 0.5
+    # no-gradient
+    field[-1, 1:-1] = 2  # right
+    dimension[-1, 1:-1] = 0
+    direction[-1, 1:-1] = -1
+    # axial symmetry
+    field[0, 1:-1] = 3  # left
+    # Register
+    index = cp.argwhere(field == 0).astype(CUPY_INT)
     phi.register_points(
         type="inner",
         index=index,
     )
-    # no-gradient
-    field = grid.zeros_field(CUPY_INT)
-    dimension = grid.zeros_field(CUPY_INT)
-    direction = grid.zeros_field(CUPY_INT)
-    # left
-    field[0, 1:-1] = 1
-    dimension[0, 1:-1] = 0
-    direction[0, 1:-1] = 1
-    # right
-    field[-1, 1:-1] = 2
-    dimension[-1, 1:-1] = 0
-    direction[-1, 1:-1] = -1
-    # down
-    field[:, 0] = 3  # down
-    dimension[:, 0] = 1
-    direction[:, 0] = 1
-    # up
-    field[:, -1] = 4  # down
-    dimension[:, -1] = 1
-    direction[:, -1] = -1
-    for i in [1, 2, 3, 4]:
-        index = cp.argwhere(field == i).astype(CUPY_INT)
-        index_tuple = (index[:, 0], index[:, 1])
-        phi.register_points(
-            type="no-gradient",
-            index=index,
-            dimension=dimension[index_tuple].astype(CUPY_INT),
-            direction=direction[index_tuple].astype(CUPY_INT),
-        )
-
-    # field = grid.zeros_field().astype(CUPY_INT)
-    # field[:, 0] = 1
-    # index = cp.argwhere(field).astype(CUPY_INT)
-    # value = (
-    #     cp.zeros([index.shape[0]])
-    #     + Quantity(1, volt).convert_to(default_energy_unit / default_charge_unit).value
-    # )
-    # phi.register_points(type="dirichlet", index=index, value=value.astype(CUPY_FLOAT))
-    # field = grid.zeros_field().astype(CUPY_INT)
-    # field[:, -1] = 1
-    # index = cp.argwhere(field).astype(CUPY_INT)
-    # value = cp.zeros([index.shape[0]])
-    # phi.register_points(type="dirichlet", index=index, value=value.astype(CUPY_FLOAT))
+    index = cp.argwhere(field == 1).astype(CUPY_INT)
+    phi.register_points(
+        type="dirichlet",
+        index=index,
+        value=value[index[:, 0], index[:, 1]],
+    )
+    index = cp.argwhere(field == 2).astype(CUPY_INT)
+    phi.register_points(
+        type="no-gradient",
+        index=index,
+        dimension=dimension[index[:, 0], index[:, 1]],
+        direction=direction[index[:, 0], index[:, 1]],
+    )
+    index = cp.argwhere(field == 3).astype(CUPY_INT)
+    phi.register_points(type="axial-symmetry", index=index)
     return phi
 
 
@@ -254,6 +299,7 @@ def get_rho(grid: Grid, r0=5, z0=0):
     dist = (grid.coordinate.r - r0) ** 2 + (grid.coordinate.z - z0) ** 2
     sigma = grid.grid_width / 3
     rho = cp.exp(-dist / (2 * sigma**2)) * charge
+    rho = grid.zeros_field()
     return rho
 
 
@@ -267,8 +313,8 @@ if __name__ == "__main__":
     import time
     import matplotlib.pyplot as plt
 
-    r0, z0 = 10, 25
-    grid = Grid(grid_width=0.25, r=[0, 50], z=[-100, 100])
+    r0, z0 = 5, 25
+    grid = Grid(grid_width=0.5, r=[0, 50], z=[-100, 100])
     solver = PECylinderSolver(grid=grid)
     grid.add_variable("phi", get_phi(grid))
     grid.add_field("rho", get_rho(grid))
@@ -296,7 +342,7 @@ if __name__ == "__main__":
         grid.coordinate.r.get(),
         grid.coordinate.z.get(),
         phi,
-        500,
+        200,
     )
     fig.colorbar(c)
     plt.show()
