@@ -233,15 +233,15 @@ class PECylinderSolver:
         self._grid.check_requirement()
         if is_restart:
             self._matrix, self._vector = self._get_equation(self._grid.variable.phi)
-        x0 = self._grid.variable.phi.value.reshape(self._grid.num_points)
-        # res, info = spl.gmres(
-        #     self._matrix,
-        #     self._vector,
-        #     # x0=x0,
-        #     maxiter=num_iterations,
-        #     restart=50,
-        # )
-        res = spl.lsqr(self._matrix, self._vector)[0]
+        # x0 = self._grid.variable.phi.value.reshape(self._grid.num_points)
+        res, info = spl.gmres(
+            self._matrix,
+            self._vector,
+            # x0=x0,
+            maxiter=num_iterations,
+            restart=50,
+        )
+        # res = spl.lsqr(self._matrix, self._vector)[0]
         self._grid.variable.phi.value = res.reshape(self._grid.shape)
 
 
