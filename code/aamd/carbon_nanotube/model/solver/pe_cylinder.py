@@ -9,18 +9,12 @@ contact : zhenyuwei99@gmail.com
 copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
-import os
-import sys
 import cupy as cp
 import cupyx.scipy.sparse as sp
 import cupyx.scipy.sparse.linalg as spl
 from mdpy.core import Grid
 from mdpy.environment import *
 from mdpy.unit import *
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from hydration import get_pore_distance
 
 
 class PECylinderSolver:
@@ -69,8 +63,13 @@ class PECylinderSolver:
     def _get_equation(self, phi):
         data, row, col = [], [], []
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        epsilon_h2 = (
+            CUPY_FLOAT(1 / self._grid.grid_width**2) * self._grid.field.epsilon
+        )
         for key, val in phi.points.items():
-            cur_data, cur_row, cur_col, cur_vector = self._func_map[key](**val)
+            cur_data, cur_row, cur_col, cur_vector = self._func_map[key](
+                epsilon_h2=epsilon_h2, **val
+            )
             data.append(cur_data)
             row.append(cur_row)
             col.append(cur_col)
@@ -87,12 +86,11 @@ class PECylinderSolver:
         # Return
         return matrix.tocsr(), vector.astype(CUPY_FLOAT)
 
-    def _get_inner_points(self, index):
+    def _get_inner_points(self, epsilon_h2, index):
         data, row, col = [], [], []
         z_shape = CUPY_INT(self._grid.shape[1])
         epsilon = self._grid.field.epsilon
         self_index = (index[:, 0], index[:, 1])
-        epsilon_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2) * epsilon
         scaled_hr = (
             CUPY_FLOAT(1 / self._grid.grid_width)
             / self._grid.coordinate.r[self_index]
@@ -133,7 +131,7 @@ class PECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def _get_dirichlet_points(self, index, value):
+    def _get_dirichlet_points(self, epsilon_h2, index, value):
         z_shape = CUPY_INT(self._grid.shape[1])
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
         size = CUPY_INT(index.shape[0])
@@ -147,13 +145,10 @@ class PECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def _get_no_gradient_points(self, index, dimension, direction):
+    def _get_no_gradient_points(self, epsilon_h2, index, dimension, direction):
         data, row, col = [], [], []
         z_shape = CUPY_INT(self._grid.shape[1])
-        epsilon = self._grid.field.epsilon
-        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
         self_index = (index[:, 0], index[:, 1])
-        epsilon_h2 = inv_h2 * epsilon
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
         for i in range(5):
             row.append(row_index)
@@ -176,7 +171,7 @@ class PECylinderSolver:
         col.append(row_index - offset)
         # self
         data.append(
-            epsilon_h2[self_index] * CUPY_FLOAT(-5) - epsilon_h2[neighbor_index]
+            epsilon_h2[self_index] * CUPY_FLOAT(-4.5) - epsilon_h2[neighbor_index]
         )
         col.append(row_index)
         # Vector
@@ -191,13 +186,12 @@ class PECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def _get_axial_symmetry_points(self, index):
+    def _get_axial_symmetry_points(self, epsilon_h2, index):
         data, row, col = [], [], []
         z_shape = CUPY_INT(self._grid.shape[1])
         epsilon = self._grid.field.epsilon
         inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
         self_index = (index[:, 0], index[:, 1])
-        epsilon_h2 = inv_h2 * epsilon
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
         for i in range(5):
             row.append(row_index)
@@ -229,19 +223,26 @@ class PECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def iterate(self, num_iterations, is_restart=True):
+    def iterate(self, num_iterations, is_restart=False):
         self._grid.check_requirement()
+        self._matrix, self._vector = self._get_equation(self._grid.variable.phi)
         if is_restart:
-            self._matrix, self._vector = self._get_equation(self._grid.variable.phi)
-        # x0 = self._grid.variable.phi.value.reshape(self._grid.num_points)
-        res, info = spl.gmres(
-            self._matrix,
-            self._vector,
-            # x0=x0,
-            maxiter=num_iterations,
-            restart=50,
-        )
-        # res = spl.lsqr(self._matrix, self._vector)[0]
+            x0 = self._grid.variable.phi.value.reshape(self._grid.num_points)
+            res, info = spl.gmres(
+                self._matrix,
+                self._vector,
+                x0=x0,
+                maxiter=num_iterations,
+                restart=100,
+            )
+        else:
+            res, info = spl.gmres(
+                self._matrix,
+                self._vector,
+                maxiter=num_iterations,
+                restart=100,
+            )
+        # res = spl.spsolve(self._matrix, self._vector)
         self._grid.variable.phi.value = res.reshape(self._grid.shape)
 
 
@@ -338,11 +339,12 @@ if __name__ == "__main__":
     threshold = 200
     phi[phi >= threshold] = threshold
     phi[phi <= -threshold] = -threshold
-    c = ax.contour(
-        grid.coordinate.r.get(),
-        grid.coordinate.z.get(),
-        phi,
+    c = ax.contourf(
+        grid.coordinate.r.get()[1:-1, 1:-1],
+        grid.coordinate.z.get()[1:-1, 1:-1],
+        phi[1:-1, 1:-1],
         200,
+        cmap="RdBu",
     )
     fig.colorbar(c)
     plt.show()
