@@ -50,6 +50,7 @@ class NPECylinderSolver:
 
         ### Constant:
         - beta: 1/kBT
+        - rho_bulk_[ion]: Bulk density of [ion]
         - d_[ion] (added): Diffusion coefficient of [ion]
         """
         self._grid = grid
@@ -73,6 +74,7 @@ class NPECylinderSolver:
             "no-gradient": self._get_no_gradient_points,
             "z-no-flux": self._get_z_no_flux_points,
             "r-no-flux": self._get_r_no_flux_points,
+            "no-flux": self._get_no_flux_points,
             "axial-symmetry": self._get_axial_symmetry_points,
         }
 
@@ -344,6 +346,9 @@ class NPECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
+    def _get_no_flux_points(self, index, r_direction, z_direction):
+        pass
+
     def _get_axial_symmetry_points(self, scaled_u, index):
         data, row, col = [], [], []
         self_index = (index[:, 0], index[:, 1])
@@ -389,16 +394,32 @@ class NPECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
+    def _guess_solution(self, rho, bulk_density):
+        dirichlet = rho.points["dirichlet"]
+        inner = rho.points["inner"]
+        x0 = self._grid.zeros_field(CUPY_FLOAT)
+        # dirichlet
+        index = (dirichlet["index"][:, 0], dirichlet["index"][:, 1])
+        value = dirichlet["value"]
+        x0[index] = value
+        # inner
+        index = (inner["index"][:, 0], inner["index"][:, 1])
+        factor = CUPY_FLOAT(-self._grid.constant.beta)
+        factor = getattr(self._grid.field, "u_%s" % self._ion_type)[index] * factor
+        x0[index] = bulk_density * cp.exp(factor) / 10
+        return x0.reshape(self._grid.num_points)
+
     def iterate(self, num_iterations, is_restart=False):
         self._grid.check_requirement()
         rho = getattr(self._grid.variable, "rho_%s" % self._ion_type)
+        rho_bulk = getattr(self._grid.constant, "rho_bulk_%s" % self._ion_type)
         self._matrix, self._vector = self._get_equation(rho)
         if is_restart:
             x0 = rho.value.reshape(self._grid.num_points)
             res, info = spl.gmres(
                 self._matrix,
                 self._vector,
-                x0=x0,
+                x0=self._guess_solution(rho=rho, bulk_density=rho_bulk),
                 maxiter=num_iterations,
                 restart=100,
             )
