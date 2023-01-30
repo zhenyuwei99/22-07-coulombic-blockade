@@ -189,8 +189,6 @@ class PECylinderSolver:
     def _get_axial_symmetry_points(self, epsilon_h2, index):
         data, row, col = [], [], []
         z_shape = CUPY_INT(self._grid.shape[1])
-        epsilon = self._grid.field.epsilon
-        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
         self_index = (index[:, 0], index[:, 1])
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
         for i in range(5):
