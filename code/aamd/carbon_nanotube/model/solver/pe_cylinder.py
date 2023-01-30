@@ -121,8 +121,8 @@ class PECylinderSolver:
         col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
-        vector[row_index] = -self._grid.field.rho[self_index] * inv_epsilon0
+        inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0 / (-4 * np.pi))
+        vector[row_index] = self._grid.field.rho[self_index] * inv_epsilon0
         # Return
         return (
             cp.hstack(data).astype(CUPY_FLOAT),
@@ -176,8 +176,8 @@ class PECylinderSolver:
         col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
-        vector[row_index] = -self._grid.field.rho[self_index] * inv_epsilon0
+        inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0 / (-4 * np.pi))
+        vector[row_index] = self._grid.field.rho[self_index] * inv_epsilon0
         # Return
         return (
             cp.hstack(data).astype(CUPY_FLOAT),
@@ -213,8 +213,8 @@ class PECylinderSolver:
         col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0)
-        vector[row_index] = -self._grid.field.rho[self_index] * inv_epsilon0
+        inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0 / (-4 * np.pi))
+        vector[row_index] = self._grid.field.rho[self_index] * inv_epsilon0
         # Return
         return (
             cp.hstack(data).astype(CUPY_FLOAT),
@@ -244,6 +244,16 @@ class PECylinderSolver:
             )
         # res = spl.spsolve(self._matrix, self._vector)
         self._grid.variable.phi.value = res.reshape(self._grid.shape)
+
+    @property
+    def grid(self) -> Grid:
+        return self._grid
+
+    @property
+    def residual(self):
+        res = self._grid.variable.phi.value.reshape(self._grid.num_points)
+        residual = (cp.abs(self._matrix.dot(res) - self._vector)).mean()
+        return residual
 
 
 def get_phi(grid: Grid):
@@ -322,14 +332,15 @@ if __name__ == "__main__":
     grid.add_field("epsilon", get_epsilon(grid, r0, z0))
 
     s = time.time()
-    solver.iterate(6000)
+    solver.iterate(5000)
     phi = grid.variable.phi.value.get()
     phi = Quantity(phi, default_energy_unit).convert_to(kilocalorie_permol).value
     e = time.time()
     print("Run xxx for %s s" % (e - s))
 
     s = time.time()
-    solver.iterate(6000, False)
+    solver.iterate(5000, False)
+    print(solver.residual)
     phi = grid.variable.phi.value.get()
     phi = Quantity(phi, default_energy_unit).convert_to(kilocalorie_permol).value
     e = time.time()
@@ -339,7 +350,7 @@ if __name__ == "__main__":
     threshold = 200
     phi[phi >= threshold] = threshold
     phi[phi <= -threshold] = -threshold
-    c = ax.contourf(
+    c = ax.contour(
         grid.coordinate.r.get()[1:-1, 1:-1],
         grid.coordinate.z.get()[1:-1, 1:-1],
         phi[1:-1, 1:-1],
