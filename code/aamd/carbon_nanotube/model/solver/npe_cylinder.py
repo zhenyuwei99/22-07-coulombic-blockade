@@ -50,7 +50,6 @@ class NPECylinderSolver:
 
         ### Constant:
         - beta: 1/kBT
-        - rho_bulk_[ion]: Bulk density of [ion]
         - d_[ion] (added): Diffusion coefficient of [ion]
         """
         self._grid = grid
@@ -164,6 +163,9 @@ class NPECylinderSolver:
             cp.hstack(col).astype(CUPY_INT),
             vector.astype(CUPY_FLOAT),
         )
+
+    def _get_no_flux_inner_points(self, scaled_u, index, direction):
+        pass
 
     def _get_dirichlet_points(self, scaled_u, index, value):
         z_shape = CUPY_INT(self._grid.shape[1])
@@ -346,8 +348,70 @@ class NPECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def _get_no_flux_points(self, index, r_direction, z_direction):
-        pass
+    def _get_no_flux_points(self, scaled_u, index, r_direction, z_direction):
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        self_index = (index[:, 0], index[:, 1])
+        r_plus_1 = (index[:, 0] + r_direction, index[:, 1])
+        r_plus_2 = (index[:, 0] + r_direction + r_direction, index[:, 1])
+        z_plus_1 = (index[:, 0], index[:, 1] + z_direction)
+        z_plus_2 = (index[:, 0], index[:, 1] + z_direction + z_direction)
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2) + cp.zeros(
+            index.shape[0], CUPY_FLOAT
+        )
+        for i in range(5):
+            row.append(row_index)
+        # r+1
+        offset = r_direction * z_shape
+        data.append(inv_h2 * CUPY_FLOAT(4))
+        col.append(row_index + offset)
+        # r+2
+        data.append(inv_h2 * CUPY_FLOAT(-0.5))
+        col.append(row_index + offset + offset)
+        # z+1
+        offset = z_direction
+        data.append(inv_h2 * CUPY_FLOAT(4))
+        col.append(row_index + offset)
+        # z+2
+        data.append(inv_h2 * CUPY_FLOAT(-0.5))
+        col.append(row_index + offset + offset)
+        # self
+        factor = (
+            CUPY_FLOAT(4) * scaled_u[r_plus_1]
+            + CUPY_FLOAT(-0.5) * scaled_u[r_plus_2]
+            + CUPY_FLOAT(4) * scaled_u[z_plus_1]
+            + CUPY_FLOAT(-0.5) * scaled_u[z_plus_2]
+            + CUPY_FLOAT(-7) * scaled_u[self_index]
+        )
+        factor += (
+            CUPY_FLOAT(0.5 * self._grid.grid_width)
+            * (
+                CUPY_FLOAT(4) * scaled_u[r_plus_1]
+                - scaled_u[r_plus_2]
+                - CUPY_FLOAT(3) * scaled_u[self_index]
+            )
+        ) ** 2
+        factor += (
+            CUPY_FLOAT(0.5 * self._grid.grid_width)
+            * (
+                CUPY_FLOAT(4) * scaled_u[z_plus_1]
+                - scaled_u[z_plus_2]
+                - CUPY_FLOAT(3) * scaled_u[self_index]
+            )
+        ) ** 2
+        factor += CUPY_FLOAT(7) * inv_h2
+        data.append(factor)
+        col.append(row_index)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
 
     def _get_axial_symmetry_points(self, scaled_u, index):
         data, row, col = [], [], []
@@ -394,32 +458,16 @@ class NPECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def _guess_solution(self, rho, bulk_density):
-        dirichlet = rho.points["dirichlet"]
-        inner = rho.points["inner"]
-        x0 = self._grid.zeros_field(CUPY_FLOAT)
-        # dirichlet
-        index = (dirichlet["index"][:, 0], dirichlet["index"][:, 1])
-        value = dirichlet["value"]
-        x0[index] = value
-        # inner
-        index = (inner["index"][:, 0], inner["index"][:, 1])
-        factor = CUPY_FLOAT(-self._grid.constant.beta)
-        factor = getattr(self._grid.field, "u_%s" % self._ion_type)[index] * factor
-        x0[index] = bulk_density * cp.exp(factor) / 10
-        return x0.reshape(self._grid.num_points)
-
     def iterate(self, num_iterations, is_restart=False):
         self._grid.check_requirement()
         rho = getattr(self._grid.variable, "rho_%s" % self._ion_type)
-        rho_bulk = getattr(self._grid.constant, "rho_bulk_%s" % self._ion_type)
         self._matrix, self._vector = self._get_equation(rho)
         if is_restart:
             x0 = rho.value.reshape(self._grid.num_points)
             res, info = spl.gmres(
                 self._matrix,
                 self._vector,
-                x0=self._guess_solution(rho=rho, bulk_density=rho_bulk),
+                x0=x0,
                 maxiter=num_iterations,
                 restart=100,
             )
@@ -469,8 +517,9 @@ def get_rho(grid: Grid):
     rho = grid.empty_variable()
     field = grid.zeros_field().astype(CUPY_INT) - 1
     value = grid.zeros_field().astype(CUPY_FLOAT)
-    dimension = grid.zeros_field().astype(CUPY_INT)
     direction = grid.zeros_field().astype(CUPY_INT)
+    r_direction = grid.zeros_field().astype(CUPY_INT)
+    z_direction = grid.zeros_field().astype(CUPY_INT)
     # 0: inner; 1: dirichlet; 2: no-gradient; 3: axial-symmetry
     # Inner
     field[1:-1, 1:-1] = 0
@@ -490,6 +539,11 @@ def get_rho(grid: Grid):
     direction[r_min_index, min_index:max_index] = 1
     field[-1, 1:-1] = 3
     direction[-1, 1:-1] = -1
+    # no-flux
+    field[r_min_index, [min_index, max_index]] = 4
+    r_direction[r_min_index, [min_index, max_index]] = 1
+    z_direction[r_min_index, min_index] = 1
+    z_direction[r_min_index, max_index] = -1
     # axial-symmetry
     field[0, 1:-1] = 4
 
@@ -520,6 +574,13 @@ def get_rho(grid: Grid):
         direction=direction[index[:, 0], index[:, 1]],
     )
     index = cp.argwhere(field == 4).astype(CUPY_INT)
+    rho.register_points(
+        type="no-flux",
+        index=index,
+        r_direction=r_direction[index[:, 0], index[:, 1]],
+        z_direction=z_direction[index[:, 0], index[:, 1]],
+    )
+    index = cp.argwhere(field == 5).astype(CUPY_INT)
     rho.register_points(type="axial-symmetry", index=index)
     return rho
 
