@@ -70,10 +70,13 @@ class NPECylinderSolver:
         self._func_map = {
             "inner": self._get_inner_points,
             "dirichlet": self._get_dirichlet_points,
-            "no-gradient": self._get_no_gradient_points,
-            "z-no-flux": self._get_z_no_flux_points,
+            # "no-gradient": self._get_no_gradient_points,
             "r-no-flux": self._get_r_no_flux_points,
+            "r-no-flux-inner": self._get_r_no_flux_inner_points,
+            "z-no-flux": self._get_z_no_flux_points,
+            "z-no-flux-inner": self._get_z_no_flux_inner_points,
             "no-flux": self._get_no_flux_points,
+            "no-flux-inner": self._get_no_flux_inner_points,
             "axial-symmetry": self._get_axial_symmetry_points,
         }
 
@@ -164,8 +167,142 @@ class NPECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def _get_no_flux_inner_points(self, scaled_u, index, direction):
-        pass
+    def _get_r_no_flux_inner_points(self, scaled_u, index, direction):
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        self_index = (index[:, 0], index[:, 1])
+        r_plus_1 = (index[:, 0] + direction, index[:, 1])
+        r_minus_1 = (index[:, 0] - direction, index[:, 1])
+        z_plus_1 = (index[:, 0], index[:, 1] + 1)
+        z_minus_1 = (index[:, 0], index[:, 1] - 1)
+        for i in range(5):
+            row.append(row_index)
+        # r+1
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
+        inv_h2 += cp.zeros(index.shape[0], CUPY_FLOAT)
+        offset = (z_shape * direction).astype(CUPY_INT)
+        data.append(inv_h2)
+        col.append(row_index + offset)
+        # r-1
+        data.append(inv_h2)
+        col.append(row_index - offset)
+        # z+1
+        data.append(inv_h2 + scaled_u[z_plus_1] - scaled_u[self_index])
+        col.append(row_index + 1)
+        # z-1
+        data.append(inv_h2)
+        col.append(row_index - 1)
+        # self
+        factor = (
+            scaled_u[r_plus_1]
+            + scaled_u[r_minus_1]
+            + scaled_u[z_plus_1]
+            + scaled_u[z_minus_1]
+            + CUPY_FLOAT(-4) * scaled_u[self_index]
+        )
+        factor -= scaled_u[z_plus_1] - scaled_u[self_index]
+        factor -= (
+            (scaled_u[r_plus_1] - scaled_u[self_index])
+            * CUPY_FLOAT(self._grid.grid_width)
+        ) ** 2
+        data.append(factor)
+        col.append(row_index)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
+
+    def _get_z_no_flux_inner_points(self, scaled_u, index, direction):
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        self_index = (index[:, 0], index[:, 1])
+        z_plus_1 = (index[:, 0], index[:, 1] + direction)
+        for i in range(2):
+            row.append(row_index)
+        inv_h = CUPY_FLOAT(1 / self._grid.grid_width)
+        inv_h += cp.zeros(index.shape[0], CUPY_FLOAT)
+        # z+1
+        data.append(inv_h)
+        col.append(row_index + direction)
+        # self
+        data.append(
+            (scaled_u[z_plus_1] - scaled_u[self_index])
+            * CUPY_FLOAT(self._grid.grid_width)
+            - inv_h
+        )
+        col.append(row_index)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        self_index = (index[:, 0], index[:, 1])
+        r_plus_1 = (index[:, 0] + 1, index[:, 1])
+        r_minus_1 = (index[:, 0] - 1, index[:, 1])
+        z_plus_1 = (index[:, 0], index[:, 1] + 1)
+        z_minus_1 = (index[:, 0], index[:, 1] - 1)
+        for i in range(5):
+            row.append(row_index)
+        # r+1
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
+        inv_h2 += cp.zeros(index.shape[0], CUPY_FLOAT)
+        inv_rh = (
+            CUPY_FLOAT(1 / self._grid.grid_width) / self._grid.coordinate.r[self_index]
+        )
+        data.append(inv_h2 + inv_rh + scaled_u[r_plus_1] - scaled_u[self_index])
+        col.append(row_index + z_shape)
+        # r-1
+        data.append(inv_h2)
+        col.append(row_index - z_shape)
+        # z+1
+        data.append(inv_h2)
+        col.append(row_index + 1)
+        # z-1
+        data.append(inv_h2)
+        col.append(row_index - 1)
+        # self
+        factor = (
+            scaled_u[r_plus_1]
+            + scaled_u[r_minus_1]
+            + scaled_u[z_plus_1]
+            + scaled_u[z_minus_1]
+            + CUPY_FLOAT(-4) * scaled_u[self_index]
+        )
+        factor += (
+            (scaled_u[r_plus_1] - scaled_u[self_index])
+            * inv_rh
+            * CUPY_FLOAT(self._grid.grid_width**2)
+        )
+        factor -= scaled_u[r_plus_1] - scaled_u[self_index]
+        factor -= (
+            (scaled_u[z_plus_1] - scaled_u[self_index])
+            * CUPY_FLOAT(self._grid.grid_width)
+        ) ** 2
+        data.append(factor)
+        col.append(row_index)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
 
     def _get_dirichlet_points(self, scaled_u, index, value):
         z_shape = CUPY_INT(self._grid.shape[1])
@@ -181,58 +318,6 @@ class NPECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def _get_no_gradient_points(self, scaled_u, index, dimension, direction):
-        data, row, col = [], [], []
-        z_shape = CUPY_INT(self._grid.shape[1])
-        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
-        inv_h2 += cp.zeros(index.shape[0], CUPY_FLOAT)
-        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
-        self_index = (index[:, 0], index[:, 1])
-        # if dimension = 0 index[:, 0] change but index[:, 1] unchanged
-        r_plus_1 = (index[:, 0] + (1 - dimension), index[:, 1] + dimension)
-        r_plus_2 = (
-            index[:, 0] + (2 - dimension * CUPY_INT(2)),
-            index[:, 1] + dimension,
-        )
-        # if dimension = 0 index[:, 0] unchanged but index[:, 1] change
-        z_plus_1 = (index[:, 0] + dimension, index[:, 1] + (1 - dimension))
-        z_minus_1 = (index[:, 0] - dimension, index[:, 1] - (1 - dimension))
-        for i in range(5):
-            row.append(row_index)
-        # +1 offset in the same direction. 0 offset z_shape, 1 offset 1
-        offset = (CUPY_INT(1) - dimension) * z_shape + dimension
-        offset = (offset * direction).astype(CUPY_INT)
-        data.append(inv_h2 * CUPY_FLOAT(4))
-        col.append(row_index + offset)
-        # +2
-        data.append(inv_h2 * CUPY_FLOAT(-0.5))
-        col.append(row_index + offset + offset)
-        # +1 offset in the different direction. 0 offset 1, 1 offset z_shape
-        offset = (CUPY_INT(1) - dimension + dimension * z_shape).astype(CUPY_INT)
-        data.append(inv_h2 + scaled_u[z_plus_1] - scaled_u[self_index])
-        col.append(row_index + offset)
-        # -1
-        data.append(inv_h2)
-        col.append(row_index - offset)
-        # self
-        data.append(
-            CUPY_FLOAT(4) * scaled_u[r_plus_1]
-            + CUPY_FLOAT(-0.5) * scaled_u[r_plus_2]
-            + CUPY_FLOAT(-4.5) * scaled_u[self_index]
-            + scaled_u[z_minus_1]
-            + CUPY_FLOAT(-5.5) * inv_h2
-        )
-        col.append(row_index)
-        # Vector
-        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        # Return
-        return (
-            cp.hstack(data).astype(CUPY_FLOAT),
-            cp.hstack(row).astype(CUPY_INT),
-            cp.hstack(col).astype(CUPY_INT),
-            vector.astype(CUPY_FLOAT),
-        )
-
     def _get_r_no_flux_points(self, scaled_u, index, direction):
         data, row, col = [], [], []
         z_shape = CUPY_INT(self._grid.shape[1])
@@ -240,8 +325,8 @@ class NPECylinderSolver:
         self_index = (index[:, 0], index[:, 1])
         r_plus_1 = (index[:, 0] + direction, index[:, 1])
         r_plus_2 = (index[:, 0] + direction + direction, index[:, 1])
-        z_plus_1 = (index[:, 0], index[:, 1] + 1)
-        z_minus_1 = (index[:, 0], index[:, 1] - 1)
+        z_plus_1 = (index[:, 0], index[:, 1] + direction)
+        z_minus_1 = (index[:, 0], index[:, 1] - direction)
         for i in range(5):
             row.append(row_index)
         # r+1
@@ -255,17 +340,17 @@ class NPECylinderSolver:
         col.append(row_index + offset + offset)
         # z+1
         data.append(inv_h2 + scaled_u[z_plus_1] - scaled_u[self_index])
-        col.append(row_index + 1)
+        col.append(row_index + direction)
         # z-1
         data.append(inv_h2)
-        col.append(row_index - 1)
+        col.append(row_index - direction)
         # self
         factor = CUPY_FLOAT(0.5 * self._grid.grid_width) * (
             CUPY_FLOAT(4) * scaled_u[r_plus_1]
             - scaled_u[r_plus_2]
             - CUPY_FLOAT(3) * scaled_u[self_index]
         )
-        factor = factor**2
+        factor = -(factor**2)
         data.append(
             CUPY_FLOAT(4) * scaled_u[r_plus_1]
             + CUPY_FLOAT(-0.5) * scaled_u[r_plus_2]
@@ -274,6 +359,60 @@ class NPECylinderSolver:
             + CUPY_FLOAT(-5.5) * inv_h2
             + factor
         )
+        col.append(row_index)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
+
+    def _get_no_flux_inner_points(self, scaled_u, index, r_direction, z_direction):
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        self_index = (index[:, 0], index[:, 1])
+        r_plus_1 = (index[:, 0] + r_direction, index[:, 1])
+        r_minus_1 = (index[:, 0] - r_direction, index[:, 1])
+        z_plus_1 = (index[:, 0], index[:, 1] + z_direction)
+        z_minus_1 = (index[:, 0], index[:, 1] - z_direction)
+        for i in range(5):
+            row.append(row_index)
+        # r+1
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
+        inv_h2 += cp.zeros(index.shape[0], CUPY_FLOAT)
+        offset = (z_shape * r_direction).astype(CUPY_INT)
+        data.append(inv_h2)
+        col.append(row_index + offset)
+        # r-1
+        data.append(inv_h2)
+        col.append(row_index - offset)
+        # z+1
+        data.append(inv_h2)
+        col.append(row_index + z_direction)
+        # z-1
+        data.append(inv_h2)
+        col.append(row_index - z_direction)
+        # self
+        factor = (
+            scaled_u[r_plus_1]
+            + scaled_u[r_minus_1]
+            + scaled_u[z_plus_1]
+            + scaled_u[z_minus_1]
+            + CUPY_FLOAT(-4) * scaled_u[self_index]
+        )
+        factor -= (
+            scaled_u[r_plus_1]
+            - scaled_u[self_index] * CUPY_FLOAT(self._grid.grid_width)
+        ) ** 2
+        factor -= (
+            scaled_u[z_plus_1]
+            - scaled_u[self_index] * CUPY_FLOAT(self._grid.grid_width)
+        ) ** 2
+        data.append(factor)
         col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
@@ -326,7 +465,7 @@ class NPECylinderSolver:
             - scaled_u[z_plus_2]
             - CUPY_FLOAT(3) * scaled_u[self_index]
         )
-        factor = factor**2
+        factor = -(factor**2)
         data.append(
             CUPY_FLOAT(4) * scaled_u[z_plus_1]
             + CUPY_FLOAT(-0.5) * scaled_u[z_plus_2]
@@ -384,7 +523,7 @@ class NPECylinderSolver:
             + CUPY_FLOAT(-0.5) * scaled_u[z_plus_2]
             + CUPY_FLOAT(-7) * scaled_u[self_index]
         )
-        factor += (
+        factor -= (
             CUPY_FLOAT(0.5 * self._grid.grid_width)
             * (
                 CUPY_FLOAT(4) * scaled_u[r_plus_1]
@@ -392,7 +531,7 @@ class NPECylinderSolver:
                 - CUPY_FLOAT(3) * scaled_u[self_index]
             )
         ) ** 2
-        factor += (
+        factor -= (
             CUPY_FLOAT(0.5 * self._grid.grid_width)
             * (
                 CUPY_FLOAT(4) * scaled_u[z_plus_1]
@@ -469,14 +608,14 @@ class NPECylinderSolver:
                 self._vector,
                 x0=x0,
                 maxiter=num_iterations,
-                restart=100,
+                restart=50,
             )
         else:
             res, info = spl.gmres(
                 self._matrix,
                 self._vector,
                 maxiter=num_iterations,
-                restart=100,
+                restart=250,
             )
         # res = spl.lsqr(self._matrix, self._vector)[0]
         # res[res < 0] = 0
@@ -540,7 +679,8 @@ def get_rho(grid: Grid):
     field[-1, 1:-1] = 3
     direction[-1, 1:-1] = -1
     # no-flux
-    field[r_min_index, [min_index, max_index]] = 4
+    field[r_min_index, [min_index, max_index]] = 3
+    direction[r_min_index, [min_index, max_index]] = 3
     r_direction[r_min_index, [min_index, max_index]] = 1
     z_direction[r_min_index, min_index] = 1
     z_direction[r_min_index, max_index] = -1
@@ -611,13 +751,13 @@ if __name__ == "__main__":
     grid.add_constant("beta", beta)
 
     s = time.time()
-    solver.iterate(1000)
+    solver.iterate(5000)
     print(solver.residual)
     e = time.time()
     print("Run xxx for %s s" % (e - s))
 
     s = time.time()
-    solver.iterate(1000, False)
+    solver.iterate(5000, False)
     e = time.time()
     print("Run xxx for %s s" % (e - s))
 
