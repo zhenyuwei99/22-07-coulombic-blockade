@@ -223,62 +223,49 @@ def get_rho(grid: Grid, density, r0, z0):
     rho = grid.empty_variable()
     field = grid.zeros_field().astype(CUPY_INT) - 1
     value = grid.zeros_field().astype(CUPY_FLOAT)
-    dimension = grid.zeros_field().astype(CUPY_INT)
     direction = grid.zeros_field().astype(CUPY_INT)
-    # 0: inner; 1: dirichlet; 2: no-flux
+    unit_vec = cp.zeros(grid.shape + [2], CUPY_FLOAT)
+    # 0: inner; 1: dirichlet; 2: axial-symmetry; 3: z-no-flux;
+    # 4: r-no-flux; 5: no-flux; 6: r-no-flux-inner
     r = grid.coordinate.r
     z = grid.coordinate.z
     index = cp.argwhere((r > r0) & (z < z0) & (z > -z0))
-    r_min_index = index[:, 0].min()
-    z_min_index = index[:, 1].min()
-    z_max_index = index[:, 1].max()
+    r_min_index = int(index[:, 0].min())
+    z_min_index = int(index[:, 1].min())
+    z_max_index = int(index[:, 1].max())
     # Inner
-    field[1 : r_min_index - 1, 1:-1] = 0
-    field[r_min_index - 1 : -1, 1 : z_min_index - 1] = 0
-    field[r_min_index - 1 : -1, z_max_index + 2 : -1] = 0
-    # dirichlet
-    field[index[:, 0], index[:, 1]] = 1
-    value[index[:, 0], index[:, 1]] = 0
-    field[:, [0, -1]] = 1
-    value[:, [0, -1]] = density
-    # no-flux
-    # # z
-    # field[r_min_index:-1, [z_min_index - 1, z_max_index + 1]] = 2
-    # dimension[r_min_index:-1, [z_min_index - 1, z_max_index + 1]] = 1
-    # direction[r_min_index:-1, z_min_index - 1] = -1
-    # direction[r_min_index:-1, z_max_index + 1] = 1
-    # # r
-    # field[0, 1:-1] = 2
-    # dimension[0, 1:-1] = 0
-    # direction[0, 1:-1] = 1
-    # field[r_min_index - 1, z_min_index - 1 : z_max_index + 2] = 2
-    # dimension[r_min_index - 1, z_min_index - 1 : z_max_index + 2] = 0
-    # direction[r_min_index - 1, z_min_index - 1 : z_max_index + 2] = -1
-    # field[-1, 1:z_min_index] = 2
-    # dimension[-1, 1:z_min_index] = 0
-    # direction[-1, 1:z_min_index] = -1
-    # field[-1, z_max_index + 1 :] = 2
-    # dimension[-1, z_max_index + 1 : -1] = 0
-    # direction[-1, z_max_index + 1 : -1] = -1
-
-    field[-1, 1:-1] = 2
-    dimension[-1, 1:-1] = 0
+    field[1:-1, 1:-1] = 0
+    # r-no-flux
+    field[-1, 1:-1] = 4
     direction[-1, 1:-1] = -1
-    field[field == -1] = 0
+    # z-no-flux
+    field[r_min_index:-1, [z_min_index - 1, z_max_index + 1]] = 3
+    direction[r_min_index - 1 : -1, z_min_index - 1] = 1
+    direction[r_min_index - 1 : -1, z_max_index + 1] = -1
+    unit_vec[r_min_index - 1 : -1, [z_min_index - 1, z_max_index + 1], 0] = 0
+    unit_vec[r_min_index - 1 : -1, z_min_index - 1, 1] = 1
+    unit_vec[r_min_index - 1 : -1, z_max_index + 1, 1] = -1
+    # r-no-flux
+    field[r_min_index - 1, z_min_index : z_max_index + 1] = 3
+    direction[r_min_index - 1, z_min_index : z_max_index + 1] = 1
+    unit_vec[r_min_index - 1, z_min_index : z_max_index + 1, 0] = 1
+    unit_vec[r_min_index - 1, z_min_index : z_max_index + 1, 1] = 0
+
+    # no-flux
+    # field[r_min_index, [z_min_index - 1, z_max_index + 1]] = 5
+    # r_direction[r_min_index, [z_min_index - 1, z_max_index + 1]] = 1
+    # z_direction[r_min_index, z_min_index - 1] = 1
+    # z_direction[r_min_index, z_max_index + 1] = -1
 
     # axial-symmetry
-    field[0, 1:-1] = 3
-    dimension[0, 1:-1] = 0
+    field[0, 1:-1] = 2
     direction[0, 1:-1] = 1
 
-    print(r_min_index, z_min_index, z_max_index, cp.argwhere(field == -2), field.shape)
-
-    # print(cp.count_nonzero(field == -1))
-    # import matplotlib.pyplot as plt
-
-    # c = plt.imshow(field.get().T)
-    # plt.colorbar(c)
-    # plt.show()
+    # dirichlet
+    field[:, [0, -1]] = 1
+    value[:, [0, -1]] = density
+    field[index[:, 0], index[:, 1]] = 1
+    value[index[:, 0], index[:, 1]] = 0
 
     index = cp.argwhere(field == 0).astype(CUPY_INT)
     rho.register_points(
@@ -292,14 +279,30 @@ def get_rho(grid: Grid, density, r0, z0):
         value=value[index[:, 0], index[:, 1]],
     )
     index = cp.argwhere(field == 2).astype(CUPY_INT)
+    rho.register_points(type="axial-symmetry", index=index)
+    index = cp.argwhere(field == 3).astype(CUPY_INT)
+    # rho.register_points(
+    # type="z-no-flux-inner",
+    # index=index,
+    # direction=direction[index[:, 0], index[:, 1]],
+    # )
+    rho.register_points(
+        type="no-flux-inner",
+        index=index,
+        unit_vec=unit_vec[index[:, 0], index[:, 1]],
+    )
+    index = cp.argwhere(field == 4).astype(CUPY_INT)
     rho.register_points(
         type="r-no-flux",
         index=index,
-        # dimension=dimension[index[:, 0], index[:, 1]],
         direction=direction[index[:, 0], index[:, 1]],
     )
-    index = cp.argwhere(field == 3).astype(CUPY_INT)
-    rho.register_points(type="axial-symmetry", index=index)
+    index = cp.argwhere(field == 5).astype(CUPY_INT)
+    rho.register_points(
+        type="r-no-flux-inner",
+        direction=direction[index[:, 0], index[:, 1]],
+        index=index,
+    )
     return rho
 
 
@@ -339,7 +342,7 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     num_levels = 100
     r = grid.coordinate.r[1:-1, 1:-1].get()
     z = grid.coordinate.z[1:-1, 1:-1].get()
-    c1 = ax[0].contourf(r, z, phi, num_levels, cmap=cmap)
+    c1 = ax[0].contour(r, z, phi, num_levels, cmap=cmap)
     ax[0].set_title("Electric Potential", fontsize=big_font)
     ax[0].set_xlabel(r"x ($\AA$)", fontsize=big_font)
     ax[0].set_ylabel(r"z ($\AA$)", fontsize=big_font)
@@ -358,7 +361,7 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     norm = matplotlib.colors.Normalize(vmin=rho.min(), vmax=rho.max())
     for index, ion_type in enumerate(ion_types):
         fig_index = index + 1
-        c = ax[fig_index].contourf(r, z, rho[index], num_levels, norm=norm, cmap=cmap)
+        c = ax[fig_index].contour(r, z, rho[index], num_levels, norm=norm, cmap=cmap)
         ax[fig_index].set_title("%s density" % ion_type, fontsize=big_font)
         ax[fig_index].set_xlabel(r"x ($\AA$)", fontsize=big_font)
         ax[fig_index].tick_params(labelsize=mid_font)
@@ -446,13 +449,14 @@ if __name__ == "__main__":
     import time
 
     r0, z0 = 10, 25
-    voltage = Quantity(10.0, volt)
+    voltage = Quantity(5.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
     ion_types = ["cl", "k"]
     grid = Grid(grid_width=0.5, r=[0, 50], z=[-100, 100])
     solver = PNPECylinderSolver(grid=grid, ion_types=ion_types)
+    solver.npe_solver_list[0].is_inverse = True
     grid.add_variable("phi", get_phi(grid, voltage=voltage))
     grid.add_field("epsilon", get_epsilon(grid, r0, z0))
     grid.add_field("rho", grid.zeros_field(CUPY_FLOAT))
@@ -464,6 +468,6 @@ if __name__ == "__main__":
 
     for i in range(100):
         print("Iteration", i)
-        solver.iterate(5, 10000, is_restart=True)
+        solver.iterate(5, 5000, is_restart=True)
         visualize_concentration(grid, ion_types=ion_types, iteration=i)
         visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, iteration=i)
