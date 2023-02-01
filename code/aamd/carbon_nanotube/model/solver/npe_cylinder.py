@@ -293,28 +293,16 @@ class NPECylinderSolver:
         # r+2
         data.append(-inv_h2)
         col.append(row_index + z_shape + z_shape)
-        if not self._is_inverse:
-            delta_u_z_h2 = scaled_u[z_plus_1] - scaled_u[self_index]
-            # z+1
-            data.append(inv_h2 + delta_u_z_h2)
-            col.append(row_index + 1)
-            # z-1
-            data.append(inv_h2)
-            col.append(row_index - 1)
-            # Self
-            data.append(curv_u_r + curv_u_z - delta_u_z_h2 - inv_h2 * CUPY_FLOAT(9))
-            col.append(row_index)
-        else:
-            delta_u_z_h2 = scaled_u[self_index] - scaled_u[z_minus_1]
-            # z+1
-            data.append(inv_h2)
-            col.append(row_index + 1)
-            # z-1
-            data.append(inv_h2 - delta_u_z_h2)
-            col.append(row_index - 1)
-            # Self
-            data.append(curv_u_r + curv_u_z + delta_u_z_h2 - inv_h2 * CUPY_FLOAT(9))
-            col.append(row_index)
+        delta_u_z_h2 = scaled_u[self_index] - scaled_u[z_minus_1]
+        # z+1
+        data.append(inv_h2)
+        col.append(row_index + 1)
+        # z-1
+        data.append(inv_h2 - delta_u_z_h2)
+        col.append(row_index - 1)
+        # Self
+        data.append(curv_u_r + curv_u_z + delta_u_z_h2 - inv_h2 * CUPY_FLOAT(9))
+        col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
         # Return
