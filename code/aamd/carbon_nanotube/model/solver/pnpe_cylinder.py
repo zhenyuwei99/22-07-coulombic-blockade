@@ -115,7 +115,7 @@ class PNPECylinderSolver:
         # Electric energy
         u += CUPY_FLOAT(z) * self._grid.variable.phi.value
         # Steric energy
-        u += self._grid.field.u_s
+        # u += self._grid.field.u_s
         setattr(self._grid.field, "u_%s" % ion_type, u.astype(CUPY_FLOAT))
 
     def iterate(self, num_iterations, num_sub_iterations=100, is_restart=False):
@@ -164,6 +164,47 @@ class PNPECylinderSolver:
         for i, j in zip(self._pre_res, self._cur_res):
             residual += cp.abs(i - j).mean()
         return residual
+
+
+def get_distance_and_vector(grid: Grid, r0, z0, rs):
+    r0s = r0 + rs
+    z0s = z0 - rs
+    r = grid.coordinate.r
+    z = grid.coordinate.z
+    dist = grid.zeros_field(CUPY_FLOAT) - 1
+    vector = cp.zeros(grid.shape + [2], CUPY_FLOAT)
+    # In pore
+    index = (cp.abs(z) <= z0s) & (r <= r0)
+    dist[index] = r0 - r[index]
+    vector[index, 0] = 1
+    vector[index, 1] = 0
+    # Out pore
+    index = (z >= z0) & (r >= r0s)
+    dist[index] = z[index] - z0
+    vector[index, 0] = 0
+    vector[index, 1] = -1
+    index = (z <= -z0) & (r >= r0s)
+    dist[index] = -(z[index] + z0)
+    vector[index, 0] = 0
+    vector[index, 1] = 1
+    # Sphere part
+    index = (z > z0s) & (r < r0s)
+    temp = cp.sqrt((z[index] - z0s) ** 2 + (r[index] - r0s) ** 2) - rs
+    temp[temp < 0] = -1
+    dist[index] = temp
+    vector[index, 0] = z[index] - z0s
+    vector[index, 1] = r[index] - r0s
+    index = (z < -z0s) & (r < r0s)
+    temp = cp.sqrt((z[index] + z0s) ** 2 + (r[index] - r0s) ** 2) - rs
+    temp[temp < 0] = -1
+    dist[index] = temp
+    vector[index, 0] = z[index] + z0s
+    vector[index, 1] = r[index] - r0s
+    # Norm
+    norm = cp.sqrt(vector[:, :, 0] ** 2 + vector[:, :, 1] ** 2)
+    vector[:, :, 0] /= norm
+    vector[:, :, 1] /= norm
+    return dist.astype(CUPY_FLOAT), vector.astype(CUPY_FLOAT)
 
 
 def get_phi(grid: Grid, voltage):
@@ -217,7 +258,7 @@ def get_phi(grid: Grid, voltage):
     return phi
 
 
-def get_rho(grid: Grid, density, r0, z0):
+def get_rho(grid: Grid, density, dist, vector):
     density = check_quantity(density, mol / decimeter**3) * NA
     density = check_quantity_value(density, 1 / default_length_unit**3)
     rho = grid.empty_variable()
@@ -230,42 +271,29 @@ def get_rho(grid: Grid, density, r0, z0):
     r = grid.coordinate.r
     z = grid.coordinate.z
     index = cp.argwhere((r > r0) & (z < z0) & (z > -z0))
-    r_min_index = int(index[:, 0].min())
-    z_min_index = int(index[:, 1].min())
-    z_max_index = int(index[:, 1].max())
     # Inner
     field[1:-1, 1:-1] = 0
-    # r-no-flux
-    field[-1, 1:-1] = 4
-    direction[-1, 1:-1] = -1
-    # z-no-flux
-    field[r_min_index:-1, [z_min_index - 1, z_max_index + 1]] = 3
-    direction[r_min_index - 1 : -1, z_min_index - 1] = 1
-    direction[r_min_index - 1 : -1, z_max_index + 1] = -1
-    unit_vec[r_min_index - 1 : -1, [z_min_index - 1, z_max_index + 1], 0] = 0
-    unit_vec[r_min_index - 1 : -1, z_min_index - 1, 1] = 1
-    unit_vec[r_min_index - 1 : -1, z_max_index + 1, 1] = -1
-    # r-no-flux
-    field[r_min_index - 1, z_min_index : z_max_index + 1] = 3
-    direction[r_min_index - 1, z_min_index : z_max_index + 1] = 1
-    unit_vec[r_min_index - 1, z_min_index : z_max_index + 1, 0] = 1
-    unit_vec[r_min_index - 1, z_min_index : z_max_index + 1, 1] = 0
 
     # no-flux
-    # field[r_min_index, [z_min_index - 1, z_max_index + 1]] = 5
-    # r_direction[r_min_index, [z_min_index - 1, z_max_index + 1]] = 1
-    # z_direction[r_min_index, z_min_index - 1] = 1
-    # z_direction[r_min_index, z_max_index + 1] = -1
+    index = dist == 0
+    field[index] = 3
+    unit_vec[index, 0] = vector[index, 0]
+    unit_vec[index, 1] = vector[index, 1]
+
+    # dirichlet
+    field[:, [0, -1]] = 1
+    value[:, [0, -1]] = density
+    index = dist == -1
+    field[index] = 1
+    value[index] = 0
 
     # axial-symmetry
     field[0, 1:-1] = 2
     direction[0, 1:-1] = 1
 
-    # dirichlet
-    field[:, [0, -1]] = 1
-    value[:, [0, -1]] = density
-    field[index[:, 0], index[:, 1]] = 1
-    value[index[:, 0], index[:, 1]] = 0
+    # r-no-flux
+    field[-1, 1:-1] = 4
+    direction[-1, 1:-1] = -1
 
     index = cp.argwhere(field == 0).astype(CUPY_INT)
     rho.register_points(
@@ -281,11 +309,6 @@ def get_rho(grid: Grid, density, r0, z0):
     index = cp.argwhere(field == 2).astype(CUPY_INT)
     rho.register_points(type="axial-symmetry", index=index)
     index = cp.argwhere(field == 3).astype(CUPY_INT)
-    # rho.register_points(
-    # type="z-no-flux-inner",
-    # index=index,
-    # direction=direction[index[:, 0], index[:, 1]],
-    # )
     rho.register_points(
         type="no-flux-inner",
         index=index,
@@ -297,18 +320,12 @@ def get_rho(grid: Grid, density, r0, z0):
         index=index,
         direction=direction[index[:, 0], index[:, 1]],
     )
-    index = cp.argwhere(field == 5).astype(CUPY_INT)
-    rho.register_points(
-        type="r-no-flux-inner",
-        direction=direction[index[:, 0], index[:, 1]],
-        index=index,
-    )
     return rho
 
 
-def get_epsilon(grid: Grid, r0, z0):
+def get_epsilon(grid: Grid, dist):
     epsilon = grid.ones_field() * CUPY_FLOAT(78)
-    epsilon[(grid.coordinate.r >= r0) & (cp.abs(grid.coordinate.z) <= z0)] = 2
+    epsilon[dist == -1] = 2
     return epsilon.astype(CUPY_FLOAT)
 
 
@@ -448,21 +465,23 @@ def visualize_flux(
 if __name__ == "__main__":
     import time
 
-    r0, z0 = 10, 25
-    voltage = Quantity(5.0, volt)
+    r0, z0, rs = 10, 25, 5
+    voltage = Quantity(15.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
     ion_types = ["cl", "k"]
     grid = Grid(grid_width=0.5, r=[0, 50], z=[-100, 100])
+    dist, vector = get_distance_and_vector(grid, r0, z0, rs)
+
     solver = PNPECylinderSolver(grid=grid, ion_types=ion_types)
     solver.npe_solver_list[0].is_inverse = True
     grid.add_variable("phi", get_phi(grid, voltage=voltage))
-    grid.add_field("epsilon", get_epsilon(grid, r0, z0))
+    grid.add_field("epsilon", get_epsilon(grid, dist))
     grid.add_field("rho", grid.zeros_field(CUPY_FLOAT))
     grid.add_field("u_s", grid.zeros_field(CUPY_FLOAT))
     for ion_type in ion_types:
-        grid.add_variable("rho_%s" % ion_type, get_rho(grid, density, r0, z0))
+        grid.add_variable("rho_%s" % ion_type, get_rho(grid, density, dist, vector))
         grid.add_field("u_%s" % ion_type, grid.zeros_field(CUPY_FLOAT))
     grid.add_constant("beta", beta)
 
