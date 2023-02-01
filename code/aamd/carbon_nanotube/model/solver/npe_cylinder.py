@@ -71,10 +71,7 @@ class NPECylinderSolver:
         self._func_map = {
             "inner": self._get_inner_points,
             "dirichlet": self._get_dirichlet_points,
-            # "no-gradient": self._get_no_gradient_points,
             "r-no-flux": self._get_r_no_flux_points,
-            "r-no-flux-inner": self._get_r_no_flux_inner_points,
-            "z-no-flux-inner": self._get_z_no_flux_inner_points,
             "no-flux-inner": self._get_no_flux_inner_points,
             "axial-symmetry": self._get_axial_symmetry_points,
         }
@@ -216,67 +213,6 @@ class NPECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def _get_r_no_flux_inner_points(self, scaled_u, index, direction):
-        data, row, col = [], [], []
-        z_shape = CUPY_INT(self._grid.shape[1])
-        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
-        self_index = (index[:, 0], index[:, 1])
-        r_plus_1 = (index[:, 0] + direction, index[:, 1])
-        for i in range(2):
-            row.append(row_index)
-        inv_h = CUPY_FLOAT(1 / self._grid.grid_width)
-        inv_h += cp.zeros(index.shape[0], CUPY_FLOAT)
-        # r+1
-        offset = (direction * z_shape).astype(CUPY_FLOAT)
-        data.append(inv_h)
-        col.append(row_index + offset)
-        # self
-        data.append(
-            (scaled_u[r_plus_1] - scaled_u[self_index])
-            * CUPY_FLOAT(self._grid.grid_width)
-            - inv_h
-        )
-        col.append(row_index)
-        # Vector
-        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        # Return
-        return (
-            cp.hstack(data).astype(CUPY_FLOAT),
-            cp.hstack(row).astype(CUPY_INT),
-            cp.hstack(col).astype(CUPY_INT),
-            vector.astype(CUPY_FLOAT),
-        )
-
-    def _get_z_no_flux_inner_points(self, scaled_u, index, direction):
-        data, row, col = [], [], []
-        z_shape = CUPY_INT(self._grid.shape[1])
-        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
-        self_index = (index[:, 0], index[:, 1])
-        z_plus_1 = (index[:, 0], index[:, 1] + direction)
-        for i in range(2):
-            row.append(row_index)
-        inv_h = CUPY_FLOAT(1 / self._grid.grid_width)
-        inv_h += cp.zeros(index.shape[0], CUPY_FLOAT)
-        # z+1
-        data.append(inv_h)
-        col.append(row_index + direction)
-        # self
-        data.append(
-            (scaled_u[z_plus_1] - scaled_u[self_index])
-            * CUPY_FLOAT(self._grid.grid_width)
-            - inv_h
-        )
-        col.append(row_index)
-        # Vector
-        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        # Return
-        return (
-            cp.hstack(data).astype(CUPY_FLOAT),
-            cp.hstack(row).astype(CUPY_INT),
-            cp.hstack(col).astype(CUPY_INT),
-            vector.astype(CUPY_FLOAT),
-        )
-
     def _get_no_flux_inner_points(self, scaled_u, index, unit_vec):
         data, row, col = [], [], []
         z_shape = CUPY_INT(self._grid.shape[1])
@@ -337,41 +273,65 @@ class NPECylinderSolver:
         self_index = (index[:, 0], index[:, 1])
         r_plus_1 = (index[:, 0] + direction, index[:, 1])
         r_plus_2 = (index[:, 0] + direction + direction, index[:, 1])
-        z_plus_1 = (index[:, 0], index[:, 1] + direction)
-        z_minus_1 = (index[:, 0], index[:, 1] - direction)
+        z_plus_1 = (index[:, 0], index[:, 1] + 1)
+        z_minus_1 = (index[:, 0], index[:, 1] - 1)
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
+        inv_h2 += cp.zeros(index.shape[0], CUPY_FLOAT)
         for i in range(5):
             row.append(row_index)
         # r+1
-        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2)
-        inv_h2 += cp.zeros(index.shape[0], CUPY_FLOAT)
         offset = z_shape * direction
         data.append(inv_h2 * CUPY_FLOAT(4))
         col.append(row_index + offset)
         # r+2
         data.append(inv_h2 * CUPY_FLOAT(-0.5))
         col.append(row_index + offset + offset)
-        # z+1
-        data.append(inv_h2 + scaled_u[z_plus_1] - scaled_u[self_index])
-        col.append(row_index + direction)
-        # z-1
-        data.append(inv_h2)
-        col.append(row_index - direction)
-        # self
-        factor = CUPY_FLOAT(0.5 * self._grid.grid_width) * (
-            CUPY_FLOAT(4) * scaled_u[r_plus_1]
-            - scaled_u[r_plus_2]
-            - CUPY_FLOAT(3) * scaled_u[self_index]
-        )
-        factor = -(factor**2)
-        data.append(
-            CUPY_FLOAT(4) * scaled_u[r_plus_1]
-            + CUPY_FLOAT(-0.5) * scaled_u[r_plus_2]
-            + CUPY_FLOAT(-4.5) * scaled_u[self_index]
-            + scaled_u[z_minus_1]
-            + CUPY_FLOAT(-5.5) * inv_h2
-            + factor
-        )
-        col.append(row_index)
+        if not self._is_inverse:
+            # z+1
+            data.append(inv_h2 + scaled_u[z_plus_1] - scaled_u[self_index])
+            col.append(row_index + 1)
+            # z-1
+            data.append(inv_h2)
+            col.append(row_index - 1)
+            # self
+            factor = CUPY_FLOAT(0.5 * self._grid.grid_width) * (
+                CUPY_FLOAT(4) * scaled_u[r_plus_1]
+                - scaled_u[r_plus_2]
+                - CUPY_FLOAT(3) * scaled_u[self_index]
+            )
+            factor = -(factor**2)
+            data.append(
+                CUPY_FLOAT(4) * scaled_u[r_plus_1]
+                + CUPY_FLOAT(-0.5) * scaled_u[r_plus_2]
+                + CUPY_FLOAT(-4.5) * scaled_u[self_index]
+                + scaled_u[z_minus_1]
+                + CUPY_FLOAT(-5.5) * inv_h2
+                + factor
+            )
+            col.append(row_index)
+        else:
+            # z+1
+            data.append(inv_h2)
+            col.append(row_index + 1)
+            # z-1
+            data.append(inv_h2 - scaled_u[self_index] + scaled_u[z_minus_1])
+            col.append(row_index - 1)
+            # self
+            factor = CUPY_FLOAT(0.5 * self._grid.grid_width) * (
+                CUPY_FLOAT(4) * scaled_u[r_plus_1]
+                - scaled_u[r_plus_2]
+                - CUPY_FLOAT(3) * scaled_u[self_index]
+            )
+            factor = -(factor**2)
+            data.append(
+                CUPY_FLOAT(4) * scaled_u[r_plus_1]
+                + CUPY_FLOAT(-0.5) * scaled_u[r_plus_2]
+                + CUPY_FLOAT(-4.5) * scaled_u[self_index]
+                + scaled_u[z_plus_1]
+                + CUPY_FLOAT(-5.5) * inv_h2
+                + factor
+            )
+            col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
         # Return
@@ -384,39 +344,55 @@ class NPECylinderSolver:
 
     def _get_axial_symmetry_points(self, scaled_u, index):
         data, row, col = [], [], []
-        self_index = (index[:, 0], index[:, 1])
         z_shape = CUPY_INT(self._grid.shape[1])
         size = CUPY_INT(index.shape[0])
-        delta_u_z_h2 = scaled_u[index[:, 0], index[:, 1] + 1] - scaled_u[self_index]
+        self_index = (index[:, 0], index[:, 1])
+        r_plus_1 = (index[:, 0] + 1, index[:, 1])
+        r_plus_2 = (index[:, 0] + 2, index[:, 1])
+        z_plus_1 = (index[:, 0], index[:, 1] + 1)
+        z_minus_1 = (index[:, 0], index[:, 1] - 1)
         curv_u_r = (
-            CUPY_FLOAT(8) * scaled_u[index[:, 0] + 1, index[:, 1]]
-            - scaled_u[index[:, 0] + 2, index[:, 1]]
+            CUPY_FLOAT(8) * scaled_u[r_plus_1]
+            - scaled_u[r_plus_2]
             - CUPY_FLOAT(7) * scaled_u[self_index]
         )
         curv_u_z = (
-            scaled_u[index[:, 0], index[:, 1] + 1]
+            scaled_u[z_plus_1]
             - CUPY_FLOAT(2) * scaled_u[self_index]
-            + scaled_u[index[:, 0], index[:, 1] - 1]
+            + scaled_u[z_minus_1]
         )
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2) + cp.zeros(size, CUPY_FLOAT)
         for i in range(5):
             row.append(row_index)
         # r+1
-        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2) + cp.zeros(size, CUPY_FLOAT)
         data.append(inv_h2 * CUPY_FLOAT(8))
         col.append(row_index + z_shape)
         # r+2
         data.append(-inv_h2)
         col.append(row_index + z_shape + z_shape)
-        # z+1
-        data.append(inv_h2 + delta_u_z_h2)
-        col.append(row_index + 1)
-        # z-1
-        data.append(inv_h2)
-        col.append(row_index - 1)
-        # Self
-        data.append(curv_u_r + curv_u_z - delta_u_z_h2 - inv_h2 * CUPY_FLOAT(9))
-        col.append(row_index)
+        if False:  # not self._is_inverse:
+            delta_u_z_h2 = scaled_u[z_plus_1] - scaled_u[self_index]
+            # z+1
+            data.append(inv_h2 + delta_u_z_h2)
+            col.append(row_index + 1)
+            # z-1
+            data.append(inv_h2)
+            col.append(row_index - 1)
+            # Self
+            data.append(curv_u_r + curv_u_z - delta_u_z_h2 - inv_h2 * CUPY_FLOAT(9))
+            col.append(row_index)
+        else:
+            delta_u_z_h2 = scaled_u[self_index] - scaled_u[z_minus_1]
+            # z+1
+            data.append(inv_h2)
+            col.append(row_index + 1)
+            # z-1
+            data.append(inv_h2 - delta_u_z_h2)
+            col.append(row_index - 1)
+            # Self
+            data.append(curv_u_r + curv_u_z + delta_u_z_h2 - inv_h2 * CUPY_FLOAT(9))
+            col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
         # Return
