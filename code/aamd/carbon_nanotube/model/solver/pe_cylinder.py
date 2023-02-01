@@ -312,9 +312,35 @@ def get_rho(grid: Grid, r0=5, z0=0):
     return rho
 
 
-def get_epsilon(grid: Grid, r0, z0):
+def get_distance(grid: Grid, r0, z0, rs):
+    r0s = r0 + rs
+    z0s = z0 - rs
+    r = grid.coordinate.r
+    z = grid.coordinate.z
+    dist = grid.zeros_field(CUPY_FLOAT) - 1
+    # In pore
+    index = (cp.abs(z) <= z0s) & (r <= r0)
+    dist[index] = r0 - r[index]
+    # Out pore
+    index = (z >= z0) & (r >= r0s)
+    dist[index] = z[index] - z0
+    index = (z <= -z0) & (r >= r0s)
+    dist[index] = -(z[index] + z0)
+    # Sphere part
+    index = (z > z0s) & (r < r0s)
+    temp = cp.sqrt((z[index] - z0s) ** 2 + (r[index] - r0s) ** 2) - rs
+    temp[temp < 0] = -1
+    dist[index] = temp
+    index = (z < -z0s) & (r < r0s)
+    temp = cp.sqrt((z[index] + z0s) ** 2 + (r[index] - r0s) ** 2) - rs
+    temp[temp < 0] = -1
+    dist[index] = temp
+    return dist.astype(CUPY_FLOAT)
+
+
+def get_epsilon(grid: Grid, dist):
     epsilon = grid.ones_field() * CUPY_FLOAT(78)
-    epsilon[(grid.coordinate.r >= r0) & (cp.abs(grid.coordinate.z) <= z0)] = 2
+    epsilon[dist == -1] = 2
     return epsilon.astype(CUPY_FLOAT)
 
 
@@ -322,13 +348,13 @@ if __name__ == "__main__":
     import time
     import matplotlib.pyplot as plt
 
-    r0, z0 = 5, 25
+    r0, z0, rs = 5, 25, 5
     grid = Grid(grid_width=0.5, r=[0, 50], z=[-100, 100])
+    dist = get_distance(grid, r0, z0, rs)
     solver = PECylinderSolver(grid=grid)
     grid.add_variable("phi", get_phi(grid))
     grid.add_field("rho", get_rho(grid))
-    grid.add_field("epsilon", get_epsilon(grid, r0, z0))
-
+    grid.add_field("epsilon", get_epsilon(grid, dist))
     s = time.time()
     solver.iterate(5000)
     phi = grid.variable.phi.value.get()
