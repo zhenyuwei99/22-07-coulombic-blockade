@@ -22,9 +22,9 @@ from mdpy.unit import *
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from analysis import visualize_concentration
 from solver import *
 from hydration import *
+from analysis_cylinder import *
 from pe_cylinder import PECylinderSolver
 from npe_cylinder import NPECylinderSolver
 
@@ -115,7 +115,7 @@ class PNPECylinderSolver:
         # Electric energy
         u += CUPY_FLOAT(z) * self._grid.variable.phi.value
         # Steric energy
-        # u += self._grid.field.u_s
+        u += self._grid.field.u_s
         setattr(self._grid.field, "u_%s" % ion_type, u.astype(CUPY_FLOAT))
 
     def iterate(self, num_iterations, num_sub_iterations=100, is_restart=False):
@@ -329,149 +329,14 @@ def get_epsilon(grid: Grid, dist):
     return epsilon.astype(CUPY_FLOAT)
 
 
-def visualize_concentration(grid: Grid, ion_types, iteration=None):
-    import matplotlib
-    import matplotlib.pyplot as plt
-
-    cur_dir = os.path.dirname(os.path.abspath(__file__))
-    img_dir = os.path.join(cur_dir, "out/image")
-    if iteration is None:
-        img_file_path = os.path.join(img_dir, "concentration.png")
-    else:
-        img_file_path = os.path.join(
-            img_dir, "concentration-%s.png" % str(iteration).zfill(3)
-        )
-    print("Result save to", img_file_path)
-
-    num_ions = len(ion_types)
-    cmap = "RdBu"
-    phi = (
-        Quantity(
-            (grid.variable.phi.value[1:-1, 1:-1]).get(),
-            default_energy_unit / default_charge_unit,
-        )
-        .convert_to(volt)
-        .value
-    )
-    fig, ax = plt.subplots(1, 1 + num_ions, figsize=[8 * (1 + num_ions), 8])
-    big_font = 20
-    mid_font = 15
-    num_levels = 100
-    r = grid.coordinate.r[1:-1, 1:-1].get()
-    z = grid.coordinate.z[1:-1, 1:-1].get()
-    c1 = ax[0].contour(r, z, phi, num_levels, cmap=cmap)
-    ax[0].set_title("Electric Potential", fontsize=big_font)
-    ax[0].set_xlabel(r"x ($\AA$)", fontsize=big_font)
-    ax[0].set_ylabel(r"z ($\AA$)", fontsize=big_font)
-    ax[0].tick_params(labelsize=mid_font)
-
-    rho_list = []
-    for index, ion_type in enumerate(ion_types):
-        rho = getattr(grid.variable, "rho_%s" % ion_type).value[1:-1, 1:-1].get()
-        rho = (
-            (Quantity(rho, 1 / default_length_unit**3) / NA)
-            .convert_to(mol / decimeter**3)
-            .value
-        )
-        rho_list.append(rho)
-    rho = np.stack(rho_list)
-    norm = matplotlib.colors.Normalize(vmin=rho.min(), vmax=rho.max())
-    for index, ion_type in enumerate(ion_types):
-        fig_index = index + 1
-        c = ax[fig_index].contour(r, z, rho[index], num_levels, norm=norm, cmap=cmap)
-        ax[fig_index].set_title("%s density" % ion_type, fontsize=big_font)
-        ax[fig_index].set_xlabel(r"x ($\AA$)", fontsize=big_font)
-        ax[fig_index].tick_params(labelsize=mid_font)
-    # Set info
-    fig.subplots_adjust(left=0.12, right=0.9)
-    position = fig.add_axes([0.05, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
-    cb1 = fig.colorbar(c1, cax=position)
-    cb1.ax.set_title(r"$\phi$ (V)", fontsize=big_font)
-    cb1.ax.tick_params(labelsize=mid_font, labelleft=True, labelright=False)
-
-    position = fig.add_axes([0.93, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
-    cb2 = fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap), cax=position)
-    cb2.ax.set_title("Density (mol/L)", fontsize=big_font)
-    cb2.ax.tick_params(labelsize=mid_font)
-    plt.savefig(img_file_path)
-    plt.close()
-
-
-def visualize_flux(
-    grid: Grid,
-    pnpe_solver: PNPECylinderSolver,
-    ion_types: list[str],
-    iteration=None,
-    img_file_path=None,
-):
-    import matplotlib
-    import matplotlib.pyplot as plt
-
-    cur_dir = os.path.dirname(os.path.abspath(__file__))
-    img_dir = os.path.join(cur_dir, "out/image")
-    if img_file_path is None:
-        if iteration is None:
-            img_file_path = os.path.join(img_dir, "z-flux.png")
-        else:
-            img_file_path = os.path.join(
-                img_dir, "z-flux-%s.png" % str(iteration).zfill(3)
-            )
-    print("Result save to", img_file_path)
-
-    # Analysis
-    num_ions = len(ion_types)
-    flux = []
-    convert = (
-        Quantity(1, elementary_charge / default_time_unit / default_length_unit**2)
-        .convert_to(ampere / default_length_unit**2)
-        .value
-    )
-    for solver in pnpe_solver.npe_solver_list:
-        flux.append(solver.get_flux(1) * convert)
-
-    fig, ax = plt.subplots(1, num_ions, figsize=[8 * num_ions, 8])
-    cmap = "RdBu"
-    big_font = 20
-    mid_font = 15
-    num_levels = 200
-    r = grid.coordinate.r[1:-1, 1:-1].get()
-    z = grid.coordinate.z[1:-1, 1:-1].get()
-    flux = cp.stack(flux).get()
-    norm = matplotlib.colors.Normalize(vmin=flux.min(), vmax=flux.max())
-    index = flux.shape[1] // 2
-    for i, j in enumerate(ion_types):
-        current = (
-            CUPY_FLOAT(np.pi * 2 * grid.grid_width**2)
-            * r[:, index]
-            * flux[i][:, index]
-        )
-        current = current.sum()
-        c = ax[i].contourf(r, z, flux[i], num_levels, norm=norm, cmap=cmap)
-        ax[i].set_title(
-            "%s z-current, current %.3e A" % (j, current), fontsize=big_font
-        )
-        ax[i].set_xlabel(r"x ($\AA$)", fontsize=big_font)
-        ax[i].tick_params(labelsize=mid_font)
-    fig.subplots_adjust(left=0.05, right=0.90)
-    position = fig.add_axes([0.93, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
-    cb = fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap), cax=position)
-    cb.ax.set_title(r"ampere/$A^2$", fontsize=big_font, rotation=90, x=-0.8, y=0.4)
-    cb.ax.yaxis.get_offset_text().set(size=mid_font)
-    cb.ax.tick_params(labelsize=mid_font)
-    plt.savefig(img_file_path)
-    plt.close()
-
-
 if __name__ == "__main__":
-    import time
-
     r0, z0, rs = 10, 25, 5
-    voltage = Quantity(15.0, volt)
+    voltage = Quantity(1.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
     ion_types = ["cl", "k"]
-    grid = Grid(grid_width=0.5, r=[0, 50], z=[-100, 100])
+    grid = Grid(grid_width=0.5, r=[0, 50], z=[-150, 150])
     dist, vector = get_distance_and_vector(grid, r0, z0, rs)
 
     solver = PNPECylinderSolver(grid=grid, ion_types=ion_types)
@@ -485,8 +350,10 @@ if __name__ == "__main__":
         grid.add_field("u_%s" % ion_type, grid.zeros_field(CUPY_FLOAT))
     grid.add_constant("beta", beta)
 
-    for i in range(100):
-        print("Iteration", i)
-        solver.iterate(5, 5000, is_restart=True)
-        visualize_concentration(grid, ion_types=ion_types, iteration=i)
-        visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, iteration=i)
+    solver.iterate(5, 5000, is_restart=True)
+    visualize_concentration(grid, ion_types=ion_types, iteration="test")
+    # for i in range(100):
+    #     print("Iteration", i)
+    #     solver.iterate(10, 5000, is_restart=True)
+    #     visualize_concentration(grid, ion_types=ion_types, iteration=i)
+    #     visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, iteration=i)
