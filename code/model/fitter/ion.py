@@ -10,14 +10,10 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
 import os
-import sys
 import numpy as np
 import mdpy as md
 from scipy import optimize
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from hydration import HydrationDistributionFunction
+from model.energy import HydrationDistributionFunction
 
 ion, target = "sod", "hydrogen"
 TRY = False
@@ -121,18 +117,16 @@ def save(json_file_path, params):
 
 
 if __name__ == "__main__":
-    import matplotlib
     import matplotlib.pyplot as plt
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    out_dir = os.path.join(cur_dir, "../out")
-    img_file_path = os.path.join(
-        os.path.join(out_dir, "image/parameterization_ion.png")
-    )
+    out_dir = os.path.join(cur_dir, "../data")
+    img_file_path = os.path.join(os.path.join(cur_dir, "../out/fitter/fitting_ion.png"))
     json_file_path = os.path.join(out_dir, "%s-%s.json" % (target, ion))
 
     data_dir = os.path.join(
-        cur_dir, "../../simulation/hydration_layer/out/analysis_out"
+        cur_dir,
+        "../../aamd/carbon_nanotube/simulation/hydration_layer/out/analysis_out",
     )
     result = md.analyser.load_analyser_result(
         os.path.join(data_dir, "rdf-%s-%s.npz" % (ion, target))

@@ -10,15 +10,11 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
 import os
-import sys
 
 import mdpy as md
 import numpy as np
 from scipy import optimize
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from hydration import HydrationDistributionFunction
+from model.energy import HydrationDistributionFunction
 
 
 def get_pore_distance(r, z, r0, z0, threshold=0.3):
@@ -89,16 +85,17 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    out_dir = os.path.join(cur_dir, "../out")
+    out_dir = os.path.join(cur_dir, "../data")
     img_file_path = os.path.join(
-        os.path.join(out_dir, "image/parameterization_pore.png")
+        os.path.join(cur_dir, "../out/fitter/fitting_pore.png")
     )
     target = "oxygen"
     json_file_path = os.path.join(out_dir, "%s-pore.json" % target)
 
     r0 = 12.864
     data_dir = os.path.join(
-        cur_dir, "../../simulation/hydration_layer/out/no-wall-charge-short-time"
+        cur_dir,
+        "../../aamd/carbon_nanotube/simulation/hydration_layer/out/no-wall-charge-short-time",
     )
     result = md.analyser.load_analyser_result(
         os.path.join(
