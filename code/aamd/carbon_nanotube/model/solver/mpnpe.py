@@ -566,7 +566,7 @@ if __name__ == "__main__":
     w0 = 100
     thickness = 2.0
     rho_bulk = Quantity(0.15, mol / decimeter**3)
-    grid_width = 1
+    grid_width = 0.5
     grid_range = np.array([[-w0, w0], [-w0, w0], [-z0 - zs, z0 + zs]])
     ion_types = ["k", "cl"]
     num_cations = 0
@@ -599,6 +599,37 @@ if __name__ == "__main__":
             y=grid_range[1],
             z=grid_range[2],
         )
+        pore_distance = get_pore_distance(
+            x=grid.coordinate.x,
+            y=grid.coordinate.y,
+            z=grid.coordinate.z,
+            r0=r0,
+            z0=z0,
+            thickness=thickness,
+        )
+        hyd = get_hyd(grid, json_dir, "pot", r0, z0, thickness)
+        import matplotlib.pyplot as plt
+
+        hyd = (
+            Quantity(hyd.get(), default_energy_unit)
+            .convert_to(kilocalorie_permol)
+            .value
+        )
+        half_index = grid.shape[1] // 2
+        # plt.contour(
+        #     grid.coordinate.x[:, half_index, :].get(),
+        #     grid.coordinate.z[:, half_index, :].get(),
+        #     hyd[:, half_index, :],
+        #     200,
+        # )
+        half_index_z = grid.shape[2] // 2
+        plt.plot(
+            grid.coordinate.x[:, half_index, half_index_z].get(),
+            hyd[:, half_index, half_index_z],
+        )
+        plt.show()
+
+        print()
         # Create solver
         solver = MPNPESolver(grid, ion_types=ion_types, is_pnp=is_pnp)
         # Add beta

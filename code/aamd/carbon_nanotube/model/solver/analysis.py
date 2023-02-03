@@ -41,7 +41,7 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     )
     phi = (
         Quantity(
-            (grid.field.phi[target_slice]).get(),
+            (grid.variable.phi.value[target_slice]).get(),
             default_energy_unit / default_charge_unit,
         )
         .convert_to(volt)
@@ -61,7 +61,7 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
 
     rho_list = []
     for index, ion_type in enumerate(ion_types):
-        rho = getattr(grid.field, "rho_%s" % ion_type)[target_slice].get()
+        rho = getattr(grid.variable, "rho_%s" % ion_type).value[target_slice].get()
         rho = (
             (Quantity(rho, 1 / default_length_unit**3) / NA)
             .convert_to(mol / decimeter**3)

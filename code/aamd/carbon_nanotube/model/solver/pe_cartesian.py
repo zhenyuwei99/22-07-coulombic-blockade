@@ -25,6 +25,11 @@ from hydration import get_pore_distance
 class PECartesianSolver:
     def __init__(self, grid: Grid) -> None:
         """All grid and constant in default unit
+        ### Coordinate:
+        - x: x
+        - y: y
+        - z: z
+
         ### Variable:
         - phi: Electric potential
             - dirichlet: Dirichlet boundary condition
