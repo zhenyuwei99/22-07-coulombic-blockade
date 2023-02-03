@@ -20,9 +20,10 @@ from mdpy.utils import check_quantity_value, check_quantity
 from mdpy.environment import *
 from mdpy.unit import *
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from model.solver import *
 
-from solver import *
+# from solver import *
 from analysis_cylinder import *
 from pe_cylinder import PECylinderSolver
 from npe_cylinder import NPECylinderSolver
