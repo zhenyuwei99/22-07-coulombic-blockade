@@ -337,21 +337,20 @@ class NPECylinderSolver:
         # res[res < 0] = 0
         rho.value = res.reshape(self._grid.shape)
 
-    def get_flux(self, dimension: int):
+    def get_flux(self, dimension: int, direction: int):
         rho = getattr(self._grid.variable, "rho_%s" % self._ion_type).value
         d = getattr(self._grid.constant, "d_%s" % self._ion_type)
-        z = getattr(self._grid.constant, "z_%s" % self._ion_type)
         scaled_u = (
             getattr(self._grid.field, "u_%s" % self._ion_type)
             * self._grid.constant.beta
         )
         inv_h = CUPY_FLOAT(1 / self._grid.grid_width)
         slice_plus = [slice(1, -1) for i in range(2)]
-        slice_plus[dimension] = slice(2, None)
+        slice_plus[dimension] = slice(2, None) if direction == 1 else slice(None, -2)
         slice_plus = tuple(slice_plus)
         flux = rho[slice_plus] - rho[1:-1, 1:-1]
         flux += rho[1:-1, 1:-1] * (scaled_u[slice_plus] - scaled_u[1:-1, 1:-1])
-        flux *= inv_h * d * z
+        flux *= inv_h * d * CUPY_FLOAT(direction)
         return flux
 
     @property
