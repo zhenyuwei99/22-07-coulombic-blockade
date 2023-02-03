@@ -14,18 +14,22 @@ ION_DICT = {
     "k": {
         "d": Quantity(1.96e-9, meter**2 / second),
         "val": Quantity(1, elementary_charge),
+        "name": "pot",
     },
     "na": {
         "d": Quantity(1.33e-9, meter**2 / second),
         "val": Quantity(1, elementary_charge),
+        "name": "sod",
     },
     "ca": {
         "d": Quantity(0.79e-9, meter**2 / second),
         "val": Quantity(2, elementary_charge),
+        "name": "carbon",
     },
     "cl": {
         "d": Quantity(2.03e-9, meter**2 / second),
         "val": Quantity(-1, elementary_charge),
+        "name": "cla",
     },
 }
 
