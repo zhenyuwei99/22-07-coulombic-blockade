@@ -23,7 +23,6 @@ from mdpy.unit import *
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from solver import *
-from hydration import *
 from analysis_cylinder import *
 from pe_cylinder import PECylinderSolver
 from npe_cylinder import NPECylinderSolver

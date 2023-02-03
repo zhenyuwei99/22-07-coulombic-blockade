@@ -19,7 +19,7 @@ from mdpy.unit import *
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from hydration import get_pore_distance
+from energy.hdf import get_pore_distance
 
 
 class PECartesianSolver:

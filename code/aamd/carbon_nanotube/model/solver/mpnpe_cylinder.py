@@ -24,8 +24,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from solver import *
 from utils import *
-from hydration import *
 from analysis_cylinder import *
+from energy import HydrationDistributionFunction
 from pe_cylinder import PECylinderSolver
 from npe_cylinder import NPECylinderSolver
 
@@ -491,7 +491,7 @@ if __name__ == "__main__":
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
     ion_types = ["cl", "k"]
-    grid = Grid(grid_width=0.25, r=[0, 50], z=[-100, 100])
+    grid = Grid(grid_width=0.5, r=[0, 50], z=[-100, 100])
     dist, vector = get_distance_and_vector(
         grid.coordinate.r, grid.coordinate.z, r0, z0, rs
     )

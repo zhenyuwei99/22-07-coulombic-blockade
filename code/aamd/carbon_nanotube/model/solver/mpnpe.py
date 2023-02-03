@@ -23,7 +23,7 @@ from mdpy.unit import *
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from hydration import *
+from energy.hdf import *
 from solver import *
 from analysis import *
 from utils import *
