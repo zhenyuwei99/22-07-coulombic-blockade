@@ -10,24 +10,21 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
 import os
-import sys
 import numpy as np
 import cupy as cp
-import mdpy as md
 import scipy.signal as signal
 from mdpy.core import Grid
 from mdpy.utils import check_quantity_value, check_quantity
 from mdpy.environment import *
 from mdpy.unit import *
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from solver import *
-from utils import *
-from analysis_cylinder import *
-from energy import HydrationDistributionFunction
-from pe_cylinder import PECylinderSolver
-from npe_cylinder import NPECylinderSolver
+from model import *
+from model.utils import *
+from model.energy import HydrationDistributionFunction
+from model.solver.utils import *
+from model.solver.pe_cylinder import PECylinderSolver
+from model.solver.npe_cylinder import NPECylinderSolver
 
 
 class MPNPECylinderSolver:

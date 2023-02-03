@@ -9,16 +9,10 @@ contact : zhenyuwei99@gmail.com
 copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
-import os
-import sys
 import cupy as cp
-import numba.cuda
 from mdpy.core import Grid
 from mdpy.environment import *
 from mdpy.unit import *
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from energy.hdf import get_pore_distance
 
 

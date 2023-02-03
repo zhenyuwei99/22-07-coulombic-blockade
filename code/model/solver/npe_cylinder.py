@@ -18,8 +18,7 @@ from mdpy.core import Grid
 from mdpy.environment import *
 from mdpy.unit import *
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from solver import *
+from model import *
 
 
 class NPECylinderSolver:

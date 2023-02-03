@@ -9,20 +9,15 @@ contact : zhenyuwei99@gmail.com
 copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
-import os
-import sys
 import numpy as np
 import cupy as cp
 import numba.cuda as cuda
-import mdpy as md
 from mdpy.core import Grid
 from mdpy.utils import check_quantity_value
 from mdpy.environment import *
 from mdpy.unit import *
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from solver import *
+from model import *
 
 
 class NPECartesianSolver:

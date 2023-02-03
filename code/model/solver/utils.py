@@ -1,28 +1,28 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 """
-file : visualize.py
-created time : 2022/12/13
+file : utils.py
+created time : 2023/02/03
 author : Zhenyu Wei
 version : 1.0
 contact : zhenyuwei99@gmail.com
 copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
-
 import os
-import cupy as cp
 import numpy as np
+import cupy as cp
 import matplotlib
 import matplotlib.pyplot as plt
-
 from mdpy.core import Grid
-from mdpy.unit import *
 from mdpy.environment import *
+from mdpy.unit import *
+from model import *
 
 
 def visualize_concentration(grid: Grid, ion_types, iteration=None):
+
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    img_dir = os.path.join(cur_dir, "out/image")
+    img_dir = os.path.join(cur_dir, "../out/solver/image")
     if iteration is None:
         img_file_path = os.path.join(img_dir, "concentration.png")
     else:
@@ -33,15 +33,9 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
 
     num_ions = len(ion_types)
     cmap = "RdBu"
-    half_index = grid.coordinate.x.shape[1] // 2
-    target_slice = (
-        slice(1, -1),
-        half_index,
-        slice(1, -1),
-    )
     phi = (
         Quantity(
-            (grid.variable.phi.value[target_slice]).get(),
+            (grid.variable.phi.value[1:-1, 1:-1]).get(),
             default_energy_unit / default_charge_unit,
         )
         .convert_to(volt)
@@ -51,9 +45,9 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     big_font = 20
     mid_font = 15
     num_levels = 100
-    x = grid.coordinate.x[target_slice].get()
-    z = grid.coordinate.z[target_slice].get()
-    c1 = ax[0].contourf(x, z, phi, num_levels, cmap=cmap)
+    r = grid.coordinate.r[1:-1, 1:-1].get()
+    z = grid.coordinate.z[1:-1, 1:-1].get()
+    c1 = ax[0].contour(r, z, phi, num_levels, cmap=cmap)
     ax[0].set_title("Electric Potential", fontsize=big_font)
     ax[0].set_xlabel(r"x ($\AA$)", fontsize=big_font)
     ax[0].set_ylabel(r"z ($\AA$)", fontsize=big_font)
@@ -61,7 +55,7 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
 
     rho_list = []
     for index, ion_type in enumerate(ion_types):
-        rho = getattr(grid.variable, "rho_%s" % ion_type).value[target_slice].get()
+        rho = getattr(grid.variable, "rho_%s" % ion_type).value[1:-1, 1:-1].get()
         rho = (
             (Quantity(rho, 1 / default_length_unit**3) / NA)
             .convert_to(mol / decimeter**3)
@@ -72,7 +66,7 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     norm = matplotlib.colors.Normalize(vmin=rho.min(), vmax=rho.max())
     for index, ion_type in enumerate(ion_types):
         fig_index = index + 1
-        c = ax[fig_index].contourf(x, z, rho[index], num_levels, norm=norm, cmap=cmap)
+        c = ax[fig_index].contour(r, z, rho[index], num_levels, norm=norm, cmap=cmap)
         ax[fig_index].set_title("%s density" % ion_type, fontsize=big_font)
         ax[fig_index].set_xlabel(r"x ($\AA$)", fontsize=big_font)
         ax[fig_index].tick_params(labelsize=mid_font)
@@ -91,48 +85,15 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     plt.close()
 
 
-def analysis_z_flux(grid: Grid, ion_type: str):
-    d_ion = getattr(grid.constant, "d_%s" % ion_type)
-    val_ion = getattr(grid.constant, "val_%s" % ion_type)
-    vdw_ion = getattr(grid.field, "vdw_%s" % ion_type)
-    hyd_ion = getattr(grid.field, "hyd_%s" % ion_type)
-    rho_ion = getattr(grid.field, "rho_%s" % ion_type)
-    potential = grid.field.phi * val_ion  # + hyd_ion + grid.field.phi_s # + vdw_ion
-    # Unit convertor return as unit ampere
-    convert = (
-        Quantity(
-            val_ion, elementary_charge / default_time_unit / default_length_unit**2
-        )
-        .convert_to(ampere / default_length_unit**2)
-        .value
-    )
-    delta_u = potential[1:-1, 1:-1, 2:] - potential[1:-1, 1:-1, 1:-1]
-    delta_u *= grid.constant.beta
-    threshold = 1e-5
-    delta_u[(delta_u < threshold) & (delta_u > 0)] = threshold
-    delta_u[(delta_u > -threshold) & (delta_u <= 0)] = -threshold
-    exp_term = cp.exp(delta_u)
-    factor = -d_ion / grid.grid_width * convert
-    factor = CUPY_FLOAT(factor) * delta_u / (exp_term - 1)
-    flux = rho_ion[1:-1, 1:-1, 2:] * exp_term
-    flux -= rho_ion[1:-1, 1:-1, 1:-1]
-    flux *= factor
-    return flux.astype(CUPY_FLOAT)
-
-
-def analysis_current(grid, ion_type):
-    flux = analysis_z_flux(grid, ion_type).get()
-    index = flux.shape[-1] // 2
-    mask = grid.field.mask[1:-1, 1:-1, index + 1].get() >= 0.5
-    current = np.sum(flux[:, :, index], where=mask) * grid.grid_width**2
-    return current
-
-
 def visualize_flux(
-    grid: Grid, ion_types: list[str], iteration=None, img_file_path=None
+    grid: Grid,
+    pnpe_solver,
+    ion_types: list[str],
+    iteration=None,
+    img_file_path=None,
 ):
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    img_dir = os.path.join(cur_dir, "out/image")
+    img_dir = os.path.join(cur_dir, "../out/solver/image")
     if img_file_path is None:
         if iteration is None:
             img_file_path = os.path.join(img_dir, "z-flux.png")
@@ -145,37 +106,43 @@ def visualize_flux(
     # Analysis
     num_ions = len(ion_types)
     flux = []
-    for ion_type in ion_types:
-        flux.append(analysis_z_flux(grid, ion_type))
-
-    half_index = grid.coordinate.x.shape[1] // 2
-    target_slice = (
-        slice(1, -1),
-        half_index,
-        slice(1, -1),
+    convert = (
+        Quantity(1, elementary_charge / default_time_unit / default_length_unit**2)
+        .convert_to(ampere / default_length_unit**2)
+        .value
     )
+    for solver, ion_type in zip(pnpe_solver.npe_solver_list, pnpe_solver.ion_types):
+        z = ION_DICT[ion_type]["val"]
+        direction = -1 if z >= 0 else 1
+        flux.append(solver.get_flux(1, direction) * convert)
+
     fig, ax = plt.subplots(1, num_ions, figsize=[8 * num_ions, 8])
     cmap = "RdBu"
     big_font = 20
     mid_font = 15
     num_levels = 200
-    x = grid.coordinate.x[target_slice].get()
-    z = grid.coordinate.z[target_slice].get()
+    r = grid.coordinate.r[1:-1, 1:-1].get()
+    z = grid.coordinate.z[1:-1, 1:-1].get()
     flux = cp.stack(flux).get()
     norm = matplotlib.colors.Normalize(vmin=flux.min(), vmax=flux.max())
-    target_slice = [
-        i - 1 if i == half_index else slice(None, None) for i in target_slice
-    ]
-    index = flux.shape[-1] // 2
-    mask = grid.field.mask[1:-1, 1:-1, index + 1].get() >= 0.5
+    index = flux.shape[1] // 2
     for i, j in enumerate(ion_types):
-        current = np.sum(flux[i][:, :, index], where=mask) * grid.grid_width**2
         # for n in [-10, -5, 0, 5, 10]:
-        # print(np.sum(flux[i][:, :, index + n], where=mask), end=", ")
-        # print("End")
-        c = ax[i].contourf(
-            x, z, flux[i][tuple(target_slice)], num_levels, norm=norm, cmap=cmap
+        #     current = (
+        #         CUPY_FLOAT(np.pi * 2 * grid.grid_width**2)
+        #         * (r[:, index + n] + CUPY_FLOAT(grid.grid_width * 0.5))
+        #         * flux[i][:, index + n]
+        #     )
+        #     current = current.sum()
+        #     print(current, end=", ")
+        # print("")
+        current = (
+            CUPY_FLOAT(np.pi * 2 * grid.grid_width**2)
+            * (r[:, index] + CUPY_FLOAT(grid.grid_width * 0.5))
+            * flux[i][:, index]
         )
+        current = current.sum()
+        c = ax[i].contour(r, z, flux[i], num_levels, norm=norm, cmap=cmap)
         ax[i].set_title(
             "%s z-current, current %.3e A" % (j, current), fontsize=big_font
         )
@@ -189,12 +156,3 @@ def visualize_flux(
     cb.ax.tick_params(labelsize=mid_font)
     plt.savefig(img_file_path)
     plt.close()
-
-
-if __name__ == "__main__":
-    import mdpy as md
-
-    grid_file_path = "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/model/solver/out/pnp-k-cl-0.15molPerL-r0-10.16A-z0-25.00A-zs-50.00A-w0-25.00A-h-0.50A-2.00V.grid"
-    grid = md.io.GridParser(grid_file_path).grid
-    # visualize_flux(grid=grid, ion_types=["k", "na", "cl"])
-    visualize_concentration(grid=grid, ion_types=["k", "cl"])
