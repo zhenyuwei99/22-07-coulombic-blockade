@@ -166,7 +166,7 @@ class PNPECylinderSolver:
         return residual
 
 
-def get_distance_and_vector(grid: Grid, r0, z0, rs):
+def get_distance_and_vector(r, z, r0, z0, rs):
     r0s = r0 + rs
     z0s = z0 - rs
     r = grid.coordinate.r
@@ -330,14 +330,16 @@ def get_epsilon(grid: Grid, dist):
 
 
 if __name__ == "__main__":
-    r0, z0, rs = 10, 25, 5
+    r0, z0, rs = 8, 25, 5
     voltage = Quantity(1.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
     ion_types = ["cl", "k"]
     grid = Grid(grid_width=0.5, r=[0, 50], z=[-150, 150])
-    dist, vector = get_distance_and_vector(grid, r0, z0, rs)
+    dist, vector = get_distance_and_vector(
+        grid.coordinate.r, grid.coordinate.z, r0, z0, rs
+    )
 
     solver = PNPECylinderSolver(grid=grid, ion_types=ion_types)
     solver.npe_solver_list[0].is_inverse = True
@@ -352,6 +354,7 @@ if __name__ == "__main__":
 
     solver.iterate(5, 5000, is_restart=True)
     visualize_concentration(grid, ion_types=ion_types, iteration="test")
+    visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, iteration="test")
     # for i in range(100):
     #     print("Iteration", i)
     #     solver.iterate(10, 5000, is_restart=True)
