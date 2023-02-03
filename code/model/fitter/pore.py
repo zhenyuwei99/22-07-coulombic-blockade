@@ -85,7 +85,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    out_dir = os.path.join(cur_dir, "../data")
+    out_dir = os.path.join(cur_dir, "../data/hdf")
     img_file_path = os.path.join(
         os.path.join(cur_dir, "../out/fitter/fitting_pore.png")
     )
