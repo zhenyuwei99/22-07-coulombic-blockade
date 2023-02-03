@@ -142,6 +142,12 @@ def visualize_flux(
         #     current = current.sum()
         #     print(current, end=", ")
         # print("")
+        current = (
+            CUPY_FLOAT(np.pi * 2 * grid.grid_width**2)
+            * (r[:, index] + CUPY_FLOAT(grid.grid_width * 0.5))
+            * flux[i][:, index]
+        )
+        current = current.sum()
         c = ax[i].contour(r, z, flux[i], num_levels, norm=norm, cmap=cmap)
         ax[i].set_title(
             "%s z-current, current %.3e A" % (j, current), fontsize=big_font
