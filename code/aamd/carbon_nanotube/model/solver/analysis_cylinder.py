@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from mdpy.core import Grid
 from mdpy.environment import *
 from mdpy.unit import *
+from solver import *
 
 
 def visualize_concentration(grid: Grid, ion_types, iteration=None):
@@ -116,8 +117,10 @@ def visualize_flux(
         .convert_to(ampere / default_length_unit**2)
         .value
     )
-    for solver in pnpe_solver.npe_solver_list:
-        flux.append(solver.get_flux(1) * convert)
+    for solver, ion_type in zip(pnpe_solver.npe_solver_list, pnpe_solver.ion_types):
+        z = ION_DICT[ion_type]["val"]
+        direction = -1 if z >= 0 else 1
+        flux.append(solver.get_flux(1, direction) * convert)
 
     fig, ax = plt.subplots(1, num_ions, figsize=[8 * num_ions, 8])
     cmap = "RdBu"
@@ -130,13 +133,16 @@ def visualize_flux(
     norm = matplotlib.colors.Normalize(vmin=flux.min(), vmax=flux.max())
     index = flux.shape[1] // 2
     for i, j in enumerate(ion_types):
-        current = (
-            CUPY_FLOAT(np.pi * 2 * grid.grid_width**2)
-            * r[:, index]
-            * flux[i][:, index]
-        )
-        current = current.sum()
-        c = ax[i].contourf(r, z, flux[i], num_levels, norm=norm, cmap=cmap)
+        # for n in [-10, -5, 0, 5, 10]:
+        #     current = (
+        #         CUPY_FLOAT(np.pi * 2 * grid.grid_width**2)
+        #         * (r[:, index + n] + CUPY_FLOAT(grid.grid_width * 0.5))
+        #         * flux[i][:, index + n]
+        #     )
+        #     current = current.sum()
+        #     print(current, end=", ")
+        # print("")
+        c = ax[i].contour(r, z, flux[i], num_levels, norm=norm, cmap=cmap)
         ax[i].set_title(
             "%s z-current, current %.3e A" % (j, current), fontsize=big_font
         )
