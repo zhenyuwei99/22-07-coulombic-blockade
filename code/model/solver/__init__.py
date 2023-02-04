@@ -4,12 +4,12 @@ __email__ = "zhenyuwei99@gmail.com"
 __copyright__ = "Copyright 2021-2021, Southeast University and Zhenyu Wei"
 __license__ = "GPLv3"
 
-from pe_cartesian import PECartesianSolver
-from npe_cartesian import NPECartesianSolver
+from model.solver.pe_cartesian import PECartesianSolver
+from model.solver.npe_cartesian import NPECartesianSolver
 
-from pe_cylinder import PECylinderSolver
-from npe_cylinder import NPECylinderSolver
-from pnpe_cylinder import PNPECylinderSolver
+from model.solver.pe_cylinder import PECylinderSolver
+from model.solver.npe_cylinder import NPECylinderSolver
+from model.solver.pnpe_cylinder import PNPECylinderSolver
 
 __all__ = [
     "PECylinderSolver",
