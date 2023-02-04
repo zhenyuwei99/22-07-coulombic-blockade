@@ -50,14 +50,14 @@ class GridWriter:
                     group_name = "variable/%s/" % (name)
                     h5f.create_group(group_name)  # /variable/name
                     h5f[group_name + "value"] = variable.value.get()
-                    group_name = group_name + "boundary/"  # /variable/name/boundary
+                    group_name = group_name + "points/"  # /variable/name/boundary
                     h5f.create_group(group_name)
-                    for boundary_type, boundary_data in variable.boundary.items():
-                        boundary_name = group_name + boundary_type + "/"
-                        h5f.create_group(boundary_name)
-                        for key, val in boundary_data.items():
+                    for point_type, point_data in variable.points.items():
+                        point_name = group_name + point_type + "/"
+                        h5f.create_group(point_name)
+                        for key, val in point_data.items():
                             # variable/name/boundary_type/key
-                            h5f[boundary_name + key] = val.get()
+                            h5f[point_name + key] = val.get()
 
     def _write_field(self, grid: Grid):
         attribute = "field"
