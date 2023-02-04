@@ -29,12 +29,15 @@ class TestGridWriter:
             constant_name_list=["epsilon0"],
         )
         phi = self.grid.empty_variable()
-        boundary_type = "d"
-        boundary_data = {
-            "index": cp.array([[1, 2, 3]], CUPY_INT),
-            "value": cp.array([1], CUPY_FLOAT),
-        }
-        phi.add_boundary(boundary_type=boundary_type, boundary_data=boundary_data)
+        field = cp.zeros(phi.shape)
+        value = cp.zeros(phi.shape)
+        field[1:-1, 1:-1] = 1
+        value[1:-1, 1:-1] = 2
+        index = cp.argwhere(field == 1)
+        phi.register_points(
+            type="inner", index=index, value=value[index[:, 0], index[:, 1]]
+        )
+        phi.register_points(type="dirichlet", index=cp.argwhere(field != 1))
         self.grid.add_variable("phi", phi)
         self.grid.add_field("epsilon", self.grid.zeros_field())
         self.grid.add_constant("epsilon0", 10)
