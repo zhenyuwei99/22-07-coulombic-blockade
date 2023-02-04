@@ -18,16 +18,14 @@ from model import *
 from model.core import Grid
 
 
-def visualize_concentration(grid: Grid, ion_types, iteration=None):
-
+def visualize_concentration(grid: Grid, ion_types, name=None, img_dir=None):
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    img_dir = os.path.join(cur_dir, "../out/solver/image")
-    if iteration is None:
+    if img_dir is None:
+        img_dir = os.path.join(cur_dir, "../out/solver/image")
+    if name is None:
         img_file_path = os.path.join(img_dir, "concentration.png")
     else:
-        img_file_path = os.path.join(
-            img_dir, "concentration-%s.png" % str(iteration).zfill(3)
-        )
+        img_file_path = os.path.join(img_dir, "%s.png" % str(name).zfill(3))
     print("Result save to", img_file_path)
 
     num_ions = len(ion_types)
@@ -88,18 +86,16 @@ def visualize_flux(
     grid: Grid,
     pnpe_solver,
     ion_types: list[str],
-    iteration=None,
-    img_file_path=None,
+    name=None,
+    img_dir=None,
 ):
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    img_dir = os.path.join(cur_dir, "../out/solver/image")
-    if img_file_path is None:
-        if iteration is None:
-            img_file_path = os.path.join(img_dir, "z-flux.png")
-        else:
-            img_file_path = os.path.join(
-                img_dir, "z-flux-%s.png" % str(iteration).zfill(3)
-            )
+    if img_dir is None:
+        img_dir = os.path.join(cur_dir, "../out/solver/image")
+    if name is None:
+        img_file_path = os.path.join(img_dir, "z-flux.png")
+    else:
+        img_file_path = os.path.join(img_dir, "%s.png" % str(name).zfill(3))
     print("Result save to", img_file_path)
 
     # Analysis
