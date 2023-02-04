@@ -11,13 +11,11 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 
 import numpy as np
 import cupy as cp
-from mdpy.core import Grid
 from mdpy.utils import check_quantity_value, check_quantity
-from mdpy.environment import *
 from mdpy.unit import *
 
 from model import *
-from model.energy import HydrationDistributionFunction
+from model.core import Grid
 from model.solver.utils import *
 from model.solver.pe_cylinder import PECylinderSolver
 from model.solver.npe_cylinder import NPECylinderSolver
@@ -324,13 +322,13 @@ def get_epsilon(grid: Grid, dist):
 
 
 if __name__ == "__main__":
-    r0, z0, rs = 8, 25, 5
+    r0, z0, rs = 8.15, 25, 5
     voltage = Quantity(1.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
     ion_types = ["cl", "k"]
-    grid = Grid(grid_width=0.5, r=[0, 50], z=[-150, 150])
+    grid = Grid(grid_width=0.25, r=[0, 50], z=[-100, 100])
     dist, vector = get_distance_and_vector(
         grid.coordinate.r, grid.coordinate.z, r0, z0, rs
     )

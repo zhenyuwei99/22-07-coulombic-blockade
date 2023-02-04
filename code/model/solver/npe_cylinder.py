@@ -9,16 +9,13 @@ contact : zhenyuwei99@gmail.com
 copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
-import os
-import sys
 import cupy as cp
 import cupyx.scipy.sparse as sp
 import cupyx.scipy.sparse.linalg as spl
-from mdpy.core import Grid
-from mdpy.environment import *
 from mdpy.unit import *
 
 from model import *
+from model.core import Grid
 
 
 class NPECylinderSolver:
@@ -110,6 +107,80 @@ class NPECylinderSolver:
             / (self._grid.coordinate.r[self_index])
         ).astype(CUPY_FLOAT)
         inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2) + cp.zeros(size, CUPY_FLOAT)
+
+        # delta_u_r_rh = (
+        #     (scaled_u[self_index] - scaled_u[index[:, 0] - 1, index[:, 1]])
+        #     * inv_rh
+        #     * CUPY_FLOAT(self._grid.grid_width**2)
+        # )
+        # delta_u_r_h2 = scaled_u[self_index] - scaled_u[index[:, 0] - 1, index[:, 1]]
+        # curv_u_r = (
+        #     scaled_u[index[:, 0] + 1, index[:, 1]]
+        #     - CUPY_FLOAT(2) * scaled_u[self_index]
+        #     + scaled_u[index[:, 0] - 1, index[:, 1]]
+        # )
+        # curv_u_z = (
+        #     scaled_u[index[:, 0], index[:, 1] + 1]
+        #     - CUPY_FLOAT(2) * scaled_u[self_index]
+        #     + scaled_u[index[:, 0], index[:, 1] - 1]
+        # )
+        # row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        # for i in range(5):
+        #     row.append(row_index)
+        # # r+1
+        # data.append(inv_h2)
+        # col.append(row_index + z_shape)
+        # # r-1
+        # data.append(inv_h2 - inv_rh - delta_u_r_h2)
+        # col.append(row_index - z_shape)
+        # if not self._is_inverse:
+        #     delta_u_z_h2 = scaled_u[index[:, 0], index[:, 1] + 1] - scaled_u[self_index]
+        #     # z+1
+        #     data.append(inv_h2 + delta_u_z_h2)
+        #     col.append(row_index + 1)
+        #     # z-1
+        #     data.append(inv_h2)
+        #     col.append(row_index - 1)
+        #     # Self
+        #     data.append(
+        #         curv_u_r
+        #         + delta_u_r_rh
+        #         + curv_u_z
+        #         - inv_h2 * CUPY_FLOAT(4)
+        #         + inv_rh
+        #         + delta_u_r_h2
+        #         - delta_u_z_h2
+        #     )
+        #     col.append(row_index)
+        # else:
+        #     delta_u_z_h2 = scaled_u[self_index] - scaled_u[index[:, 0], index[:, 1] - 1]
+        #     # z+1
+        #     data.append(inv_h2)
+        #     col.append(row_index + 1)
+        #     # z-1
+        #     data.append(inv_h2 - delta_u_z_h2)
+        #     col.append(row_index - 1)
+        #     # Self
+        #     data.append(
+        #         curv_u_r
+        #         + delta_u_r_rh
+        #         + curv_u_z
+        #         - inv_h2 * CUPY_FLOAT(4)
+        #         + inv_rh
+        #         + delta_u_r_h2
+        #         + delta_u_z_h2
+        #     )
+        #     col.append(row_index)
+        # # Vector
+        # vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        # # Return
+        # return (
+        #     cp.hstack(data).astype(CUPY_FLOAT),
+        #     cp.hstack(row).astype(CUPY_INT),
+        #     cp.hstack(col).astype(CUPY_INT),
+        #     vector.astype(CUPY_FLOAT),
+        # )
+
         delta_u_r_rh = (
             (scaled_u[index[:, 0] + 1, index[:, 1]] - scaled_u[self_index])
             * inv_rh

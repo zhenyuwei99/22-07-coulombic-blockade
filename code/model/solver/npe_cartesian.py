@@ -11,13 +11,11 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 
 import numpy as np
 import cupy as cp
-import numba.cuda as cuda
-from mdpy.core import Grid
 from mdpy.utils import check_quantity_value
-from mdpy.environment import *
 from mdpy.unit import *
 
 from model import *
+from model.core import Grid
 
 
 class NPECartesianSolver:

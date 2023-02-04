@@ -12,9 +12,11 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 import cupy as cp
 import cupyx.scipy.sparse as sp
 import cupyx.scipy.sparse.linalg as spl
-from mdpy.core import Grid
-from mdpy.environment import *
 from mdpy.unit import *
+
+from model import *
+from model.core import Grid
+from model.utils import *
 
 
 class PECylinderSolver:
@@ -63,9 +65,7 @@ class PECylinderSolver:
     def _get_equation(self, phi):
         data, row, col = [], [], []
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        epsilon_h2 = (
-            CUPY_FLOAT(1 / self._grid.grid_width**2) * self._grid.field.epsilon
-        )
+        epsilon_h2 = CUPY_FLOAT(1 / self._grid.grid_width) * self._grid.field.epsilon
         for key, val in phi.points.items():
             cur_data, cur_row, cur_col, cur_vector = self._func_map[key](
                 epsilon_h2=epsilon_h2, **val
@@ -91,14 +91,55 @@ class PECylinderSolver:
         z_shape = CUPY_INT(self._grid.shape[1])
         epsilon = self._grid.field.epsilon
         self_index = (index[:, 0], index[:, 1])
-        scaled_hr = (
-            CUPY_FLOAT(1 / self._grid.grid_width)
-            / self._grid.coordinate.r[self_index]
-            * epsilon[self_index]
-        ).astype(CUPY_FLOAT)
+        # scaled_hr = (
+        #     CUPY_FLOAT(1 / self._grid.grid_width)
+        #     / self._grid.coordinate.r[self_index]
+        #     * epsilon[self_index]
+        # ).astype(CUPY_FLOAT)
+        scaled_hr = (epsilon[self_index] / self._grid.coordinate.r[self_index]).astype(
+            CUPY_FLOAT
+        )
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
         for i in range(5):
             row.append(row_index)
+
+        # direction = (index[:, 1] >= self._grid.inner_shape[1] // 2).astype(CUPY_INT)
+        # plus_direction = direction.copy()
+        # minus_direction = (direction - 1).astype(CUPY_INT)
+        # direction[direction == 0] = -1
+
+        # # r+1
+        # data.append(epsilon_h2[index[:, 0] + 1, index[:, 1]] + scaled_hr)
+        # col.append(row_index + z_shape)
+        # # r-1
+        # data.append(epsilon_h2[self_index])
+        # col.append(row_index - z_shape)
+        # # z+1
+        # data.append(epsilon_h2[index[:, 0], index[:, 1] + plus_direction])
+        # col.append(row_index + 1)
+        # # z-1
+        # data.append(epsilon_h2[index[:, 0], index[:, 1] + minus_direction])
+        # col.append(row_index - 1)
+        # # Self
+        # data.append(
+        #     -epsilon_h2[index[:, 0] + 1, index[:, 1]]
+        #     - epsilon_h2[index[:, 0], index[:, 1] + direction]
+        #     - scaled_hr
+        #     - epsilon_h2[self_index] * CUPY_FLOAT(2)
+        # )
+        # col.append(row_index)
+        # # Vector
+        # vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        # inv_epsilon0 = NUMPY_FLOAT(1 / self._grid.constant.epsilon0 / (-4 * np.pi))
+        # vector[row_index] = self._grid.field.rho[self_index] * inv_epsilon0
+        # # Return
+        # return (
+        #     cp.hstack(data).astype(CUPY_FLOAT),
+        #     cp.hstack(row).astype(CUPY_INT),
+        #     cp.hstack(col).astype(CUPY_INT),
+        #     vector.astype(CUPY_FLOAT),
+        # )
+
         # r+1
         data.append(epsilon_h2[index[:, 0] + 1, index[:, 1]] + scaled_hr)
         col.append(row_index + z_shape)
@@ -224,23 +265,23 @@ class PECylinderSolver:
     def iterate(self, num_iterations, is_restart=False):
         self._grid.check_requirement()
         self._matrix, self._vector = self._get_equation(self._grid.variable.phi)
-        if is_restart:
-            x0 = self._grid.variable.phi.value.reshape(self._grid.num_points)
-            res, info = spl.gmres(
-                self._matrix,
-                self._vector,
-                x0=x0,
-                maxiter=num_iterations,
-                restart=100,
-            )
-        else:
-            res, info = spl.gmres(
-                self._matrix,
-                self._vector,
-                maxiter=num_iterations,
-                restart=100,
-            )
-        # res = spl.spsolve(self._matrix, self._vector)
+        # if is_restart:
+        #     x0 = self._grid.variable.phi.value.reshape(self._grid.num_points)
+        #     res, info = spl.gmres(
+        #         self._matrix,
+        #         self._vector,
+        #         x0=x0,
+        #         maxiter=num_iterations,
+        #         restart=100,
+        #     )
+        # else:
+        #     res, info = spl.gmres(
+        #         self._matrix,
+        #         self._vector,
+        #         maxiter=num_iterations,
+        #         restart=100,
+        #     )
+        res = spl.spsolve(self._matrix, self._vector)
         self._grid.variable.phi.value = res.reshape(self._grid.shape)
 
     @property
@@ -338,8 +379,13 @@ def get_distance(grid: Grid, r0, z0, rs):
     return dist.astype(CUPY_FLOAT)
 
 
-def get_epsilon(grid: Grid, dist):
-    epsilon = grid.ones_field() * CUPY_FLOAT(78)
+def get_epsilon(grid: Grid, dist, rs=4):
+    # epsilon = grid.ones_field() * CUPY_FLOAT(78)
+    # epsilon[dist == -1] = 2
+    alpha = reasoning_alpha(rs)
+    epsilon = CUPY_FLOAT(1) / (1 + cp.exp(-alpha * dist))
+    epsilon *= CUPY_FLOAT(78)
+    epsilon += CUPY_FLOAT(2)
     epsilon[dist == -1] = 2
     return epsilon.astype(CUPY_FLOAT)
 
@@ -355,6 +401,16 @@ if __name__ == "__main__":
     grid.add_variable("phi", get_phi(grid))
     grid.add_field("rho", get_rho(grid))
     grid.add_field("epsilon", get_epsilon(grid, dist))
+
+    import matplotlib.pyplot as plt
+
+    epsilon = get_epsilon(grid, dist)
+    c = plt.contourf(
+        grid.coordinate.r.get(), grid.coordinate.z.get(), epsilon.get(), 200
+    )
+    plt.colorbar()
+    plt.show()
+
     s = time.time()
     solver.iterate(5000)
     phi = grid.variable.phi.value.get()

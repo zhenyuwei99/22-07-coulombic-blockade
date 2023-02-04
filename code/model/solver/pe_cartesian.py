@@ -11,9 +11,11 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 
 import cupy as cp
 from mdpy.core import Grid
-from mdpy.environment import *
 from mdpy.unit import *
-from energy.hdf import get_pore_distance
+
+from model import *
+from model.core import Grid
+from model.energy.hdf import get_pore_distance
 
 
 class PECartesianSolver:

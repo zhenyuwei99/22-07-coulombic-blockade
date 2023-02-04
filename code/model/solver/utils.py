@@ -13,10 +13,9 @@ import numpy as np
 import cupy as cp
 import matplotlib
 import matplotlib.pyplot as plt
-from mdpy.core import Grid
-from mdpy.environment import *
 from mdpy.unit import *
 from model import *
+from model.core import Grid
 
 
 def visualize_concentration(grid: Grid, ion_types, iteration=None):

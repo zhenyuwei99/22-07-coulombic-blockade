@@ -13,14 +13,13 @@ import os
 import numpy as np
 import cupy as cp
 import scipy.signal as signal
-from mdpy.core import Grid
 from mdpy.utils import check_quantity_value, check_quantity
-from mdpy.environment import *
 from mdpy.unit import *
 
 
 from model import *
 from model.utils import *
+from model.core import Grid
 from model.energy import HydrationDistributionFunction
 from model.solver.utils import *
 from model.solver.pe_cylinder import PECylinderSolver
@@ -410,7 +409,7 @@ def get_hyd(grid: Grid, json_dir: str, ion_type: str, r0, z0, rs):
         g = -(Quantity(300 * g, kelvin) * KB).convert_to(default_energy_unit).value
         print(f.shape, g.shape)
         energy_factor = grid.grid_width**3 * n0
-        potential = (g.sum() - signal.fftconvolve(f, g, "valid")) * energy_factor
+        potential = (signal.fftconvolve(f, g, "valid") - g.sum()) * energy_factor
     return cp.array(potential[:, 0, :], CUPY_FLOAT)
 
     potential = grid.zeros_field().get()
@@ -463,7 +462,7 @@ def get_hyd(grid: Grid, json_dir: str, ion_type: str, r0, z0, rs):
 
 
 def get_vdw(grid: Grid, type1: str, type2: str, distance):
-    threshold = Quantity(5, kilocalorie_permol).convert_to(default_energy_unit).value
+    threshold = Quantity(1, kilocalorie_permol).convert_to(default_energy_unit).value
     sigma1 = check_quantity_value(VDW_DICT[type1]["sigma"], default_length_unit)
     epsilon1 = check_quantity_value(VDW_DICT[type1]["epsilon"], default_energy_unit)
     sigma2 = check_quantity_value(VDW_DICT[type2]["sigma"], default_length_unit)
@@ -479,7 +478,7 @@ def get_vdw(grid: Grid, type1: str, type2: str, distance):
 
 if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    json_dir = os.path.join(cur_dir, "../out")
+    json_dir = os.path.join(cur_dir, "../data/hdf")
     out_dir = os.path.join(cur_dir, "out")
 
     r0, z0, rs = 8.15, 25, 5
@@ -495,17 +494,17 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
 
-    hyd = get_hyd(grid, json_dir, "pot", r0, z0, rs).get()
-    hyd = Quantity(hyd, default_energy_unit).convert_to(kilocalorie_permol).value
+    # hyd = get_hyd(grid, json_dir, "pot", r0, z0, rs).get()
+    # hyd = Quantity(hyd, default_energy_unit).convert_to(kilocalorie_permol).value
     vdw = get_vdw(grid, "k", "c", dist).get()
     vdw = Quantity(vdw, default_energy_unit).convert_to(kilocalorie_permol).value
     # c = plt.contour(grid.coordinate.r.get(), grid.coordinate.z.get(), hyd, 200)
-    # plt.colorbar()
+    # # plt.colorbar()
     half_index = grid.shape[1] // 2
-    # plt.plot(grid.coordinate.r.get()[:, half_index], (hyd + vdw)[:, half_index], ".-")
-    plt.plot(grid.coordinate.r.get()[:, half_index], hyd[:, half_index + 20], ".-")
-    # plt.plot(grid.coordinate.r.get()[:, half_index], vdw[:, half_index], ".-")
-    # plt.plot(grid.coordinate.z.get()[1, :], hyd[1, :])
+    # # plt.plot(grid.coordinate.r.get()[:, half_index], (hyd + vdw)[:, half_index], ".-")
+    # plt.plot(grid.coordinate.r.get()[:, half_index], hyd[:, half_index + 20], ".-")
+    plt.plot(grid.coordinate.r.get()[:, half_index], vdw[:, half_index], ".-")
+    # # plt.plot(grid.coordinate.z.get()[1, :], hyd[1, :])
     plt.show()
 
     solver = MPNPECylinderSolver(grid=grid, ion_types=ion_types)
@@ -519,7 +518,8 @@ if __name__ == "__main__":
         grid.add_field("u_%s" % ion_type, grid.zeros_field(CUPY_FLOAT))
         grid.add_field(
             "u_hyd_%s" % ion_type,
-            get_hyd(grid, json_dir, ION_DICT[ion_type]["name"], r0, z0, rs),
+            get_vdw(grid, ion_type, "c", dist)
+            # get_hyd(grid, json_dir, ION_DICT[ion_type]["name"], r0, z0, rs),
         )
     grid.add_constant("beta", beta)
 
