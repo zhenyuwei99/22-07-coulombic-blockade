@@ -9,13 +9,15 @@ contact : zhenyuwei99@gmail.com
 copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
+import os
 import numpy as np
 import cupy as cp
 from mdpy.utils import check_quantity_value, check_quantity
 from mdpy.unit import *
 
 from model import *
-from model.core import Grid
+from model.core import Grid, GridWriter
+from model.utils import *
 from model.solver.utils import *
 from model.solver.pe_cylinder import PECylinderSolver
 from model.solver.npe_cylinder import NPECylinderSolver
@@ -322,13 +324,13 @@ def get_epsilon(grid: Grid, dist):
 
 
 if __name__ == "__main__":
-    r0, z0, rs = 8.15, 25, 5
-    voltage = Quantity(1.0, volt)
+    r0, z0, rs = 6.77, 25, 5
+    voltage = Quantity(10.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
     ion_types = ["cl", "k"]
-    grid = Grid(grid_width=0.25, r=[0, 50], z=[-100, 100])
+    grid = Grid(grid_width=0.5, r=[0, 75], z=[-100, 100])
     dist, vector = get_distance_and_vector(
         grid.coordinate.r, grid.coordinate.z, r0, z0, rs
     )
@@ -344,9 +346,14 @@ if __name__ == "__main__":
         grid.add_field("u_%s" % ion_type, grid.zeros_field(CUPY_FLOAT))
     grid.add_constant("beta", beta)
 
-    solver.iterate(5, 5000, is_restart=True)
-    visualize_concentration(grid, ion_types=ion_types, iteration="test")
-    visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, iteration="test")
+    solver.iterate(10, 5000, is_restart=True)
+    visualize_concentration(grid, ion_types=ion_types, name="rho-test")
+    visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, name="flux-test")
+
+    cur_dir = os.path.dirname(os.path.abspath(__file__))
+    out_dir = check_dir(os.path.join(cur_dir, "../out/solver/pnpe"))
+    writer = GridWriter(os.path.join(out_dir, "test.grid"))
+    writer.write(grid)
     # for i in range(100):
     #     print("Iteration", i)
     #     solver.iterate(10, 5000, is_restart=True)
