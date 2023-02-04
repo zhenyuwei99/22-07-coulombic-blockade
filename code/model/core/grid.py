@@ -31,7 +31,7 @@ class Variable:
     def __init__(self, shape: list[int]) -> None:
         self._shape = shape
         self._num_points = int(np.prod(self._shape))
-        self._value: cp.ndarray = cp.zeros(self._shape, CUPY_FLOAT)
+        self._value = cp.zeros(self._shape, CUPY_FLOAT)
         self._points = {}
         self._num_registered_points = 0
 
@@ -60,6 +60,10 @@ class Variable:
         return self._num_registered_points == self._num_points
 
     @property
+    def shape(self):
+        return self._shape
+
+    @property
     def value(self) -> cp.ndarray:
         return self._value
 
@@ -67,24 +71,23 @@ class Variable:
     def value(self, value: cp.ndarray):
         try:
             val = cp.array(value, CUPY_FLOAT)
-            is_wrong_shape = False
-            for i, j in zip(val.shape, self._shape):
-                if i != j:
-                    is_wrong_shape = True
-                    break
-            if is_wrong_shape:
-                val_shape = "(" + ", ".join([i for i in value.shape]) + ")"
-                self_shape = "(" + ", ".join([i for i in self._shape]) + ")"
-                raise ArrayDimError(
-                    "Array with %s, while %s provided" % (self_shape, self_shape)
-                )
-            self._value = val
-
         except:
             raise TypeError(
                 "numpy.ndarray or cupy.ndarray required, while %s provided"
                 % type(value)
             )
+        is_wrong_shape = False
+        for i, j in zip(val.shape, self._shape):
+            if i != j:
+                is_wrong_shape = True
+                break
+        if is_wrong_shape:
+            val_shape = "(" + ", ".join([str(i) for i in value.shape]) + ")"
+            self_shape = "(" + ", ".join([str(i) for i in self._shape]) + ")"
+            raise ArrayDimError(
+                "Array with %s, while %s provided" % (self_shape, val_shape)
+            )
+        self._value = val
 
     @property
     def points(self) -> dict:
