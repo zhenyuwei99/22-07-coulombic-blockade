@@ -4,6 +4,9 @@ __email__ = "zhenyuwei99@gmail.com"
 __copyright__ = "Copyright 2021-2021, Southeast University and Zhenyu Wei"
 __license__ = "GPLv3"
 
+import numba as nb
+import cupy as cp
+import numpy as np
 from mdpy.unit import *
 from mdpy.utils import check_quantity_value
 
@@ -14,18 +17,22 @@ ION_DICT = {
     "k": {
         "d": Quantity(1.96e-9, meter**2 / second),
         "val": Quantity(1, elementary_charge),
+        "name": "pot",
     },
     "na": {
         "d": Quantity(1.33e-9, meter**2 / second),
         "val": Quantity(1, elementary_charge),
+        "name": "sod",
     },
     "ca": {
         "d": Quantity(0.79e-9, meter**2 / second),
         "val": Quantity(2, elementary_charge),
+        "name": "carbon",
     },
     "cl": {
         "d": Quantity(2.03e-9, meter**2 / second),
         "val": Quantity(-1, elementary_charge),
+        "name": "cla",
     },
 }
 
@@ -62,6 +69,33 @@ NP_DENSITY_LOWER_THRESHOLD = (
     .convert_to(1 / default_length_unit**3)
     .value
 )
+
+precision = "single"
+
+CUPY_BIT = cp.uint32
+NUMBA_BIT = nb.uint32
+NUMPY_BIT = np.uint32
+UNIT_FLOAT = np.float128
+if precision == "single":
+    CUPY_FLOAT = cp.float32
+    NUMBA_FLOAT = nb.float32
+    NUMPY_FLOAT = np.float32
+    CUPY_INT = cp.int32
+    NUMBA_INT = nb.int32
+    NUMPY_INT = np.int32
+    CUPY_UINT = cp.uint32
+    NUMBA_UINT = nb.uint32
+    NUMPY_UINT = np.uint32
+elif precision == "double":
+    CUPY_FLOAT = cp.float64
+    NUMBA_FLOAT = nb.float64
+    NUMPY_FLOAT = np.float64
+    CUPY_INT = cp.int64
+    NUMBA_INT = nb.int64
+    NUMPY_INT = np.int64
+    CUPY_UINT = cp.uint64
+    NUMBA_UINT = nb.uint64
+    NUMPY_UINT = np.uint64
 
 
 def generate_name(ion_types, r0, z0, zs, w0, rho, grid_width, voltage, is_pnp):

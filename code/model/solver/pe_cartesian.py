@@ -9,22 +9,23 @@ contact : zhenyuwei99@gmail.com
 copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
-import os
-import sys
 import cupy as cp
-import numba.cuda
 from mdpy.core import Grid
-from mdpy.environment import *
 from mdpy.unit import *
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from hydration import get_pore_distance
+from model import *
+from model.core import Grid
+from model.energy.hdf import get_pore_distance
 
 
 class PECartesianSolver:
     def __init__(self, grid: Grid) -> None:
         """All grid and constant in default unit
+        ### Coordinate:
+        - x: x
+        - y: y
+        - z: z
+
         ### Variable:
         - phi: Electric potential
             - dirichlet: Dirichlet boundary condition
