@@ -122,19 +122,19 @@ def visualize_flux(
     norm = matplotlib.colors.Normalize(vmin=flux.min(), vmax=flux.max())
     index = flux.shape[1] // 2
     for i, j in enumerate(ion_types):
-        z = ION_DICT[ion_type]["val"].value
-        index = 20 if z < 0 else -20
+        val = ION_DICT[j]["val"].value
+        index = 20 if val < 0 else -20
         current = (
             CUPY_FLOAT(np.pi * 2 * grid.grid_width)
             * (r[:, index] + CUPY_FLOAT(grid.grid_width * 0.5))
             * flux[i][:, index]
         )
-        current = current.sum()
+        current = current.sum() * val
         c = ax[i].contour(r, z, flux[i], num_levels, norm=norm, cmap=cmap)
         ax[i].set_title(
             "%s z-current, current %.3e A" % (j, current), fontsize=big_font
         )
-        ax[i].set_xlabel(r"x ($\AA$)", fontsize=big_font)
+        ax[i].set_xlabel(r"r ($\AA$)", fontsize=big_font)
         ax[i].tick_params(labelsize=mid_font)
     fig.subplots_adjust(left=0.05, right=0.90)
     position = fig.add_axes([0.93, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
