@@ -107,7 +107,7 @@ def visualize_flux(
         .value
     )
     for solver, ion_type in zip(pnpe_solver.npe_solver_list, pnpe_solver.ion_types):
-        z = ION_DICT[ion_type]["val"]
+        z = ION_DICT[ion_type]["val"].value
         direction = -1 if z >= 0 else 1
         flux.append(solver.get_flux(1, direction) * convert)
 
@@ -122,17 +122,10 @@ def visualize_flux(
     norm = matplotlib.colors.Normalize(vmin=flux.min(), vmax=flux.max())
     index = flux.shape[1] // 2
     for i, j in enumerate(ion_types):
-        # for n in [-10, -5, 0, 5, 10]:
-        #     current = (
-        #         CUPY_FLOAT(np.pi * 2 * grid.grid_width**2)
-        #         * (r[:, index + n] + CUPY_FLOAT(grid.grid_width * 0.5))
-        #         * flux[i][:, index + n]
-        #     )
-        #     current = current.sum()
-        #     print(current, end=", ")
-        # print("")
+        z = ION_DICT[ion_type]["val"].value
+        index = 20 if z < 0 else -20
         current = (
-            CUPY_FLOAT(np.pi * 2 * grid.grid_width**2)
+            CUPY_FLOAT(np.pi * 2 * grid.grid_width)
             * (r[:, index] + CUPY_FLOAT(grid.grid_width * 0.5))
             * flux[i][:, index]
         )
