@@ -102,74 +102,67 @@ class NPECylinderSolver:
         self_index = (index[:, 0], index[:, 1])
         z_shape = CUPY_INT(self._grid.shape[1])
         size = CUPY_INT(index.shape[0])
+        self_index = (index[:, 0], index[:, 1])
+        # Upwind direction
+        r_direction = (
+            scaled_u[index[:, 0] + 1, index[:, 1]] <= scaled_u[self_index]
+        ).astype(CUPY_INT)
+        r_direction[r_direction == 0] = CUPY_INT(-1)
+        z_direction = (
+            scaled_u[index[:, 0], index[:, 1] + 1] <= scaled_u[self_index]
+        ).astype(CUPY_INT)
+        z_direction[z_direction == 0] = CUPY_INT(-1)
+        # Index
+        r_plus = (index[:, 0] + r_direction, index[:, 1])
+        r_minus = (index[:, 0] - r_direction, index[:, 1])
+        z_plus = (index[:, 0], index[:, 1] + z_direction)
+        z_minus = (index[:, 0], index[:, 1] - z_direction)
+        # Factor
+        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2) + cp.zeros(size, CUPY_FLOAT)
         inv_rh = (
             CUPY_FLOAT(1 / self._grid.grid_width)
+            * r_direction
             / (self._grid.coordinate.r[self_index])
         ).astype(CUPY_FLOAT)
-        inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2) + cp.zeros(size, CUPY_FLOAT)
+        delta_u_r_h2 = scaled_u[r_plus] - scaled_u[self_index]
         delta_u_r_rh = (
-            (scaled_u[index[:, 0] + 1, index[:, 1]] - scaled_u[self_index])
-            * inv_rh
-            * CUPY_FLOAT(self._grid.grid_width**2)
+            r_direction * delta_u_r_h2 * inv_rh * CUPY_FLOAT(self._grid.grid_width**2)
         )
-        delta_u_r_h2 = scaled_u[index[:, 0] + 1, index[:, 1]] - scaled_u[self_index]
         curv_u_r = (
-            scaled_u[index[:, 0] + 1, index[:, 1]]
-            - CUPY_FLOAT(2) * scaled_u[self_index]
-            + scaled_u[index[:, 0] - 1, index[:, 1]]
+            scaled_u[r_plus] - CUPY_FLOAT(2) * scaled_u[self_index] + scaled_u[r_minus]
         )
+        delta_u_z_h2 = scaled_u[z_plus] - scaled_u[self_index]
         curv_u_z = (
-            scaled_u[index[:, 0], index[:, 1] + 1]
-            - CUPY_FLOAT(2) * scaled_u[self_index]
-            + scaled_u[index[:, 0], index[:, 1] - 1]
+            scaled_u[z_plus] - CUPY_FLOAT(2) * scaled_u[self_index] + scaled_u[z_minus]
         )
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
         for i in range(5):
             row.append(row_index)
-        # r+1
+        # r plus
+        offset = r_direction * z_shape
         data.append(inv_h2 + inv_rh + delta_u_r_h2)
-        col.append(row_index + z_shape)
-        # r-1
+        col.append(row_index + offset)
+        # r minus
         data.append(inv_h2)
-        col.append(row_index - z_shape)
-        if not self._is_inverse:
-            delta_u_z_h2 = scaled_u[index[:, 0], index[:, 1] + 1] - scaled_u[self_index]
-            # z+1
-            data.append(inv_h2 + delta_u_z_h2)
-            col.append(row_index + 1)
-            # z-1
-            data.append(inv_h2)
-            col.append(row_index - 1)
-            # Self
-            data.append(
-                curv_u_r
-                + delta_u_r_rh
-                + curv_u_z
-                - inv_h2 * CUPY_FLOAT(4)
-                - inv_rh
-                - delta_u_r_h2
-                - delta_u_z_h2
-            )
-            col.append(row_index)
-        else:
-            delta_u_z_h2 = scaled_u[self_index] - scaled_u[index[:, 0], index[:, 1] - 1]
-            # z+1
-            data.append(inv_h2)
-            col.append(row_index + 1)
-            # z-1
-            data.append(inv_h2 - delta_u_z_h2)
-            col.append(row_index - 1)
-            # Self
-            data.append(
-                curv_u_r
-                + delta_u_r_rh
-                + curv_u_z
-                - inv_h2 * CUPY_FLOAT(4)
-                - inv_rh
-                - delta_u_r_h2
-                + delta_u_z_h2
-            )
-            col.append(row_index)
+        col.append(row_index - offset)
+        # z plus
+        offset = z_direction
+        data.append(inv_h2 + delta_u_z_h2)
+        col.append(row_index + offset)
+        # z minus
+        data.append(inv_h2)
+        col.append(row_index - offset)
+        # Self
+        data.append(
+            delta_u_r_rh
+            + curv_u_r
+            + curv_u_z
+            - inv_h2 * CUPY_FLOAT(4)
+            - inv_rh
+            - delta_u_r_h2
+            - delta_u_z_h2
+        )
+        col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
         # Return
@@ -188,6 +181,16 @@ class NPECylinderSolver:
         direction[direction >= 0] = 1
         direction[direction < 0] = -1
         direction = direction.astype(CUPY_INT)
+        self_index = (index[:, 0], index[:, 1])
+        factor = cp.zeros_like(direction, CUPY_INT)
+        factor[:, 0] = (
+            scaled_u[index[:, 0] + direction[:, 0], index[:, 1]] <= scaled_u[self_index]
+        ).astype(CUPY_INT)
+        factor[:, 1] = (
+            scaled_u[index[:, 0], index[:, 1] + direction[:, 1]] <= scaled_u[self_index]
+        ).astype(CUPY_INT)
+        factor[direction == 0] = CUPY_INT(-1)
+        direction *= factor
         factor = direction.astype(CUPY_FLOAT)
         factor *= unit_vec
         r_plus = (index[:, 0] + direction[:, 0], index[:, 1])
@@ -265,22 +268,25 @@ class NPECylinderSolver:
         z_shape = CUPY_INT(self._grid.shape[1])
         size = CUPY_INT(index.shape[0])
         self_index = (index[:, 0], index[:, 1])
+        z_direction = (
+            scaled_u[index[:, 0], index[:, 1] + 1] <= scaled_u[self_index]
+        ).astype(CUPY_INT)
+        z_direction[z_direction == 0] = CUPY_INT(-1)
         r_plus_1 = (index[:, 0] + 1, index[:, 1])
         r_plus_2 = (index[:, 0] + 2, index[:, 1])
-        z_plus_1 = (index[:, 0], index[:, 1] + 1)
-        z_minus_1 = (index[:, 0], index[:, 1] - 1)
+        z_plus = (index[:, 0], index[:, 1] + z_direction)
+        z_minus = (index[:, 0], index[:, 1] - z_direction)
         curv_u_r = (
             CUPY_FLOAT(8) * scaled_u[r_plus_1]
             - scaled_u[r_plus_2]
             - CUPY_FLOAT(7) * scaled_u[self_index]
         )
         curv_u_z = (
-            scaled_u[z_plus_1]
-            - CUPY_FLOAT(2) * scaled_u[self_index]
-            + scaled_u[z_minus_1]
+            scaled_u[z_plus] - CUPY_FLOAT(2) * scaled_u[self_index] + scaled_u[z_minus]
         )
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
         inv_h2 = CUPY_FLOAT(1 / self._grid.grid_width**2) + cp.zeros(size, CUPY_FLOAT)
+        delta_u_z_h2 = scaled_u[z_plus] - scaled_u[self_index]
         for i in range(5):
             row.append(row_index)
         # r+1
@@ -289,15 +295,14 @@ class NPECylinderSolver:
         # r+2
         data.append(-inv_h2)
         col.append(row_index + z_shape + z_shape)
-        delta_u_z_h2 = scaled_u[self_index] - scaled_u[z_minus_1]
         # z+1
-        data.append(inv_h2)
-        col.append(row_index + 1)
+        data.append(inv_h2 + delta_u_z_h2)
+        col.append(row_index + z_direction)
         # z-1
-        data.append(inv_h2 - delta_u_z_h2)
-        col.append(row_index - 1)
+        data.append(inv_h2)
+        col.append(row_index - z_direction)
         # Self
-        data.append(curv_u_r + curv_u_z + delta_u_z_h2 - inv_h2 * CUPY_FLOAT(9))
+        data.append(curv_u_r + curv_u_z - delta_u_z_h2 - inv_h2 * CUPY_FLOAT(9))
         col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
