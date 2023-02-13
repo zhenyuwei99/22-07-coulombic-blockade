@@ -109,7 +109,7 @@ class PNPECylinderSolver:
         # Electric energy
         u += CUPY_FLOAT(z) * self._grid.variable.phi.value
         # Steric energy
-        u += self._grid.field.u_s
+        # u += self._grid.field.u_s
         setattr(self._grid.field, "u_%s" % ion_type, u.astype(CUPY_FLOAT))
 
     def iterate(self, num_iterations, num_sub_iterations=100, is_restart=False):
@@ -283,14 +283,14 @@ def get_epsilon(grid: Grid, dist):
 
 
 if __name__ == "__main__":
-    r0, z0, rs = 6.77, 25, 5
-    voltage = Quantity(10.0, volt)
+    r0, z0, rs = 10, 25, 5
+    voltage = Quantity(4.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
     ion_types = ["cl", "k"]
     grid = Grid(grid_width=0.5, r=[0, 75], z=[-100, 100])
-    dist, vector = get_distance_and_vector(
+    dist, vector = get_pore_distance_and_vector(
         grid.coordinate.r, grid.coordinate.z, r0, z0, rs
     )
 

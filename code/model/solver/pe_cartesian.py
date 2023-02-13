@@ -15,7 +15,7 @@ from mdpy.unit import *
 
 from model import *
 from model.core import Grid
-from model.energy.hdf import get_pore_distance
+from model.potential.hdf import get_pore_distance
 
 
 class PECartesianSolver:
