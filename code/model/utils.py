@@ -47,7 +47,52 @@ def check_dir(dir_path: str, restart=False):
     return dir_path
 
 
-def get_distance_and_vector(r, z, r0, z0, rs):
+def get_pore_distance_cartesian(x, y, z, r0, z0, rs):
+    # Area illustration
+    #       |
+    #   2   |   3 Pore-bulk
+    #  Bulk |
+    # =======--------------
+    #      ||
+    #      ||   1
+    #      ||  Pore
+    # ---------------------
+
+    dist = cp.zeros_like(x, CUPY_FLOAT) - CUPY_FLOAT(1)
+    r0s = r0 + rs
+    z0s = z0 - rs
+    r = cp.sqrt(x**2 + y**2)
+    z_abs = cp.abs(z)
+    area1 = (z_abs < z0s) & (r < r0)  # In pore
+    area2 = (r > r0s) & (z_abs > z0)  # In bulk
+    area3 = (z_abs >= z0s) & (r <= r0s)  # In pore-bulk
+
+    dist[area1] = r0 - r[area1]
+    dist[area2] = z_abs[area2] - z0
+    dist[area3] = cp.sqrt((z_abs[area3] - z0s) ** 2 + (r[area3] - r0s) ** 2)
+    dist[area3] -= rs
+    dist[dist <= 0] = 0
+
+    return dist
+
+
+def get_pore_distance_cylinder(r, z, r0, z0, rs):
+    r0s = r0 + rs
+    z0s = z0 - rs
+    dist = cp.zeros_like(r, CUPY_FLOAT) - CUPY_FLOAT(1)
+    z_abs = cp.abs(z)
+    area1 = (z_abs < z0s) & (r < r0)  # In pore
+    area2 = (r > r0s) & (z_abs > z0)  # In bulk
+    area3 = (z_abs >= z0s) & (r <= r0s)  # In pore-bulk
+    dist[area1] = r0 - r[area1]
+    dist[area2] = z_abs[area2] - z0
+    dist[area3] = cp.sqrt((z_abs[area3] - z0s) ** 2 + (r[area3] - r0s) ** 2)
+    dist[area3] -= rs
+    dist[dist <= 0] = 0
+    return dist.astype(CUPY_FLOAT)
+
+
+def get_pore_distance_and_vector(r, z, r0, z0, rs):
     r0s = r0 + rs
     z0s = z0 - rs
     dist = cp.zeros_like(r, CUPY_FLOAT) - CUPY_FLOAT(1)
