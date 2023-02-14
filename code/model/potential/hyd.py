@@ -82,7 +82,7 @@ class HydrationPotential:
         x_extend, y_extend, z_extend = self._get_mesh_points(
             self._r_extend_range, self._z_extend_range, self._grid_width
         )
-        dist = get_pore_distance_cartesian(
+        dist1, dist2 = get_double_pore_distance_cartesian(
             x_extend, y_extend, z_extend, self._r0, self._z0, self._rs
         )
 
@@ -100,10 +100,19 @@ class HydrationPotential:
             )
             g_pore = HydrationDistributionFunction(json_file_path=pore_file_path)
             g_ion = HydrationDistributionFunction(json_file_path=ion_file_path)
-            f = g_pore(dist)
+            f = g_pore(dist1) * g_pore(dist2)
             g = g_ion(dist_ion)
             g = g * cp.log(g) * kBT
-            hyd = (signal.fftconvolve(f, g, "valid") - g.sum()) * factor
+            hyd += (signal.fftconvolve(f, g, "valid") - g.sum()) * factor
+        import matplotlib.pyplot as plt
+
+        half_index = x_extend.shape[1] // 2
+        plt.contour(
+            x_extend[:, half_index, :].get(),
+            z_extend[:, half_index, :].get(),
+            f[:, half_index, :].get(),
+        )
+        plt.show()
         half_index = int((hyd.shape[1] - 1) / 2)
         target_slice = (
             slice(half_index, None),
