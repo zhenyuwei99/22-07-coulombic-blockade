@@ -19,7 +19,7 @@ from mdpy.unit import *
 
 from model import *
 from model.utils import *
-from model.core import Grid
+from model.core import Grid, GridWriter
 from model.potential import HydrationPotential, VDWPotential
 from model.solver.utils import *
 from model.solver.pe_cylinder import PECylinderSolver
@@ -218,7 +218,7 @@ def get_phi(grid: Grid, voltage):
     return phi
 
 
-def get_rho(grid: Grid, density, dist, vector):
+def get_rho(grid: Grid, ion_type, density, dist, vector):
     density = check_quantity(density, mol / decimeter**3) * NA
     density = check_quantity_value(density, 1 / default_length_unit**3)
     rho = grid.empty_variable()
@@ -240,9 +240,18 @@ def get_rho(grid: Grid, density, dist, vector):
     unit_vec[index, 0] = vector[index, 0]
     unit_vec[index, 1] = vector[index, 1]
 
-    # dirichlet
-    field[:, [0, -1]] = 1
-    value[:, [0, -1]] = density
+    # dirichlet and no gradient
+    val = ION_DICT[ion_type]["val"].value
+    if val < 0:
+        dirichlet_index = 0
+        no_gradient_index = -1
+    else:
+        dirichlet_index = -1
+        no_gradient_index = 0
+    field[:, dirichlet_index] = 1
+    value[:, dirichlet_index] = density
+    field[:, no_gradient_index] = 5
+    direction[:no_gradient_index] = 1 if no_gradient_index == 0 else -1
     index = dist == -1
     field[index] = 1
     value[index] = 0
@@ -280,6 +289,12 @@ def get_rho(grid: Grid, density, dist, vector):
         index=index,
         direction=direction[index[:, 0], index[:, 1]],
     )
+    index = cp.argwhere(field == 5).astype(CUPY_INT)
+    rho.register_points(
+        type="z-no-gradient",
+        index=index,
+        direction=direction[index[:, 0], index[:, 1]],
+    )
     return rho
 
 
@@ -304,8 +319,8 @@ if __name__ == "__main__":
     json_dir = os.path.join(cur_dir, "../data/hdf")
     out_dir = os.path.join(cur_dir, "out")
 
-    r0, z0, rs = 10, 25, 5
-    voltage = Quantity(4.0, volt)
+    r0, z0, rs = 10.134, 25, 5
+    voltage = Quantity(5.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
@@ -322,27 +337,32 @@ if __name__ == "__main__":
     grid.add_field("rho", grid.zeros_field(CUPY_FLOAT))
     grid.add_field("u_s", grid.zeros_field(CUPY_FLOAT))
     for ion_type in ion_types:
-        grid.add_variable("rho_%s" % ion_type, get_rho(grid, density, dist, vector))
+        grid.add_variable(
+            "rho_%s" % ion_type, get_rho(grid, ion_type, density, dist, vector)
+        )
         grid.add_field("u_%s" % ion_type, grid.zeros_field(CUPY_FLOAT))
         grid.add_field(
             "u_hyd_%s" % ion_type,
             get_vdw(grid, ion_type, "c", r0, z0, rs)
-            + get_hyd(grid, ION_DICT[ion_type]["name"], r0, z0, rs, json_dir),
+            # get_hyd(grid, ION_DICT[ion_type]["name"], r0, z0, rs, json_dir),
         )
     grid.add_constant("beta", beta)
 
-    # solver.iterate(5, 5000, is_restart=True)
-    # visualize_concentration(grid, ion_types=ion_types, iteration="test")
+    solver.iterate(20, 1000, is_restart=True)
+    cur_dir = os.path.dirname(os.path.abspath(__file__))
+    out_dir = check_dir(os.path.join(cur_dir, "../out/solver/mpnpe"))
+    writer = GridWriter(os.path.join(out_dir, "test.grid"))
+    writer.write(grid)
 
-    for i in range(100):
-        print("Iteration", i)
-        solver.iterate(5, 5000, is_restart=True)
-        visualize_concentration(
-            grid, ion_types=ion_types, name="%s-rho" % str(i).zfill(3)
-        )
-        visualize_flux(
-            grid,
-            pnpe_solver=solver,
-            ion_types=ion_types,
-            name="%s-flux" % str(i).zfill(3),
-        )
+    # for i in range(100):
+    #     print("Iteration", i)
+    #     solver.iterate(5, 1000, is_restart=True)
+    #     visualize_concentration(
+    #         grid, ion_types=ion_types, name="%s-rho" % str(i).zfill(3)
+    #     )
+    #     visualize_flux(
+    #         grid,
+    #         pnpe_solver=solver,
+    #         ion_types=ion_types,
+    #         name="%s-flux" % str(i).zfill(3),
+    #     )
