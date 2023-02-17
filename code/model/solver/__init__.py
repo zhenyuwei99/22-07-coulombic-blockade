@@ -10,6 +10,7 @@ from model.solver.npe_cartesian import NPECartesianSolver
 from model.solver.pe_cylinder import PECylinderSolver
 from model.solver.npe_cylinder import NPECylinderSolver
 from model.solver.pnpe_cylinder import PNPECylinderSolver
+from model.solver.mpnpe_cylinder import MPNPECylinderSolver
 
 __all__ = [
     "PECylinderSolver",
