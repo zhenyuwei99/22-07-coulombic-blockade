@@ -182,9 +182,13 @@ def get_phi(grid: Grid, voltage):
     field[:, -1] = 1  # up
     value[:, -1] = voltage * 0.5
     # no-gradient
-    field[-1, 1:-1] = 2  # right
-    dimension[-1, 1:-1] = 0
-    direction[-1, 1:-1] = -1
+    if True:
+        field[-1, 1:-1] = 2  # right
+        dimension[-1, 1:-1] = 0
+        direction[-1, 1:-1] = -1
+    else:
+        field[-1, 1:-1] = 1  # right
+        value[-1, 1:-1] = 0
     # axial symmetry
     field[0, 1:-1] = 3  # left
     # Register
@@ -211,7 +215,7 @@ def get_phi(grid: Grid, voltage):
     return phi
 
 
-def get_rho(grid: Grid, density, dist, vector):
+def get_rho(grid: Grid, ion_type, density, dist, vector):
     density = check_quantity(density, mol / decimeter**3) * NA
     density = check_quantity_value(density, 1 / default_length_unit**3)
     rho = grid.empty_variable()
@@ -219,8 +223,8 @@ def get_rho(grid: Grid, density, dist, vector):
     value = grid.zeros_field().astype(CUPY_FLOAT)
     direction = grid.zeros_field().astype(CUPY_INT)
     unit_vec = cp.zeros(grid.shape + [2], CUPY_FLOAT)
-    # 0: inner; 1: dirichlet; 2: axial-symmetry; 3: z-no-flux;
-    # 4: r-no-flux; 5: no-flux; 6: r-no-flux-inner
+    # 0: inner; 1: dirichlet; 2: axial-symmetry; 3: no-flux-inner;
+    # 4: r-no-flux; 5: z-no-gradient
     r = grid.coordinate.r
     z = grid.coordinate.z
     index = cp.argwhere((r > r0) & (z < z0) & (z > -z0))
@@ -232,10 +236,34 @@ def get_rho(grid: Grid, density, dist, vector):
     field[index] = 3
     unit_vec[index, 0] = vector[index, 0]
     unit_vec[index, 1] = vector[index, 1]
+    # stern
+    # r_stern = 2.0
+    # index = dist == r_stern
+    # field[index] = 3
+    # unit_vec[index, 0] = -vector[index, 0]
+    # unit_vec[index, 1] = -vector[index, 1]
+    # index = (dist < r_stern) & (dist >= 0)
+    # field[index] = 1
+    # value[index] = density * 0.5
+    # value[index] = (density * 0.5 / r_stern) * dist[index]
 
-    # dirichlet
-    field[:, [0, -1]] = 1
-    value[:, [0, -1]] = density
+    # dirichlet and no gradient
+    if not True:
+        val = ION_DICT[ion_type]["val"].value
+        if val < 0:
+            dirichlet_index = 0
+            no_gradient_index = -1
+        else:
+            dirichlet_index = -1
+            no_gradient_index = 0
+        field[:, dirichlet_index] = 1
+        value[:, dirichlet_index] = density
+        field[:, no_gradient_index] = 5
+        direction[:, no_gradient_index] = 1 if no_gradient_index == 0 else -1
+    else:
+        field[:, [0, -1]] = 1
+        value[:, [0, -1]] = density
+    # Dirichlet
     index = dist == -1
     field[index] = 1
     value[index] = 0
@@ -245,9 +273,21 @@ def get_rho(grid: Grid, density, dist, vector):
     direction[0, 1:-1] = 1
 
     # r-no-flux
-    field[-1, 1:-1] = 4
-    direction[-1, 1:-1] = -1
+    if True:
+        field[-1, 1:-1] = 4
+        direction[-1, 1:-1] = -1
+    else:
+        index = cp.argwhere(dist == 0)[:, 1]
+        z_min, z_max = index.min(), index.max()
+        # field[-1, 1 : z_min + 1] = 1
+        # value[-1, 1 : z_min + 1] = density
+        # field[-1, z_max:-1] = 1
+        # value[-1, z_max:-1] = density
 
+        field[-1, 1 : z_min + 1] = 6
+        direction[-1, 1 : z_min + 1] = 1
+        field[-1, z_max:-1] = 6
+        direction[-1, z_max:-1] = -1
     index = cp.argwhere(field == 0).astype(CUPY_INT)
     rho.register_points(
         type="inner",
@@ -273,6 +313,24 @@ def get_rho(grid: Grid, density, dist, vector):
         index=index,
         direction=direction[index[:, 0], index[:, 1]],
     )
+    index = cp.argwhere(field == 5).astype(CUPY_INT)
+    rho.register_points(
+        type="z-no-gradient",
+        index=index,
+        direction=direction[index[:, 0], index[:, 1]],
+    )
+    index = cp.argwhere(field == 6).astype(CUPY_INT)
+    rho.register_points(
+        type="z-no-flux",
+        index=index,
+        direction=direction[index[:, 0], index[:, 1]],
+    )
+    index = cp.argwhere(field == 7).astype(CUPY_INT)
+    rho.register_points(
+        type="stern",
+        index=index,
+        density=value[index[:, 0], index[:, 1]],
+    )
     return rho
 
 
@@ -283,13 +341,13 @@ def get_epsilon(grid: Grid, dist):
 
 
 if __name__ == "__main__":
-    r0, z0, rs = 10, 25, 5
-    voltage = Quantity(4.0, volt)
+    r0, z0, rs = 15, 25, 2.5
+    voltage = Quantity(1.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
     ion_types = ["cl", "k"]
-    grid = Grid(grid_width=0.5, r=[0, 75], z=[-100, 100])
+    grid = Grid(grid_width=0.5, r=[0, 75], z=[-150, 150])
     dist, vector = get_pore_distance_and_vector(
         grid.coordinate.r, grid.coordinate.z, r0, z0, rs
     )
@@ -301,11 +359,14 @@ if __name__ == "__main__":
     grid.add_field("rho", grid.zeros_field(CUPY_FLOAT))
     grid.add_field("u_s", grid.zeros_field(CUPY_FLOAT))
     for ion_type in ion_types:
-        grid.add_variable("rho_%s" % ion_type, get_rho(grid, density, dist, vector))
+        grid.add_variable(
+            "rho_%s" % ion_type, get_rho(grid, ion_type, density, dist, vector)
+        )
         grid.add_field("u_%s" % ion_type, grid.zeros_field(CUPY_FLOAT))
     grid.add_constant("beta", beta)
 
-    solver.iterate(10, 5000, is_restart=True)
+    solver.iterate(20, 1000, is_restart=False)
+    solver.iterate(20, 1000, is_restart=True)
     visualize_concentration(grid, ion_types=ion_types, name="rho-test")
     visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, name="flux-test")
 

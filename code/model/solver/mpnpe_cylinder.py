@@ -226,8 +226,8 @@ def get_rho(grid: Grid, ion_type, density, dist, vector):
     value = grid.zeros_field().astype(CUPY_FLOAT)
     direction = grid.zeros_field().astype(CUPY_INT)
     unit_vec = cp.zeros(grid.shape + [2], CUPY_FLOAT)
-    # 0: inner; 1: dirichlet; 2: axial-symmetry; 3: z-no-flux;
-    # 4: r-no-flux; 5: no-flux; 6: r-no-flux-inner
+    # 0: inner; 1: dirichlet; 2: axial-symmetry; 3: no-flux-inner;
+    # 4: r-no-flux; 5: z-no-gradient
     r = grid.coordinate.r
     z = grid.coordinate.z
     index = cp.argwhere((r > r0) & (z < z0) & (z > -z0))
@@ -235,23 +235,44 @@ def get_rho(grid: Grid, ion_type, density, dist, vector):
     field[1:-1, 1:-1] = 0
 
     # no-flux
-    index = dist == 0
-    field[index] = 3
-    unit_vec[index, 0] = vector[index, 0]
-    unit_vec[index, 1] = vector[index, 1]
+    # index = dist == 0
+    # field[index] = 3
+    # unit_vec[index, 0] = -vector[index, 0]
+    # unit_vec[index, 1] = -vector[index, 1]
+
+    # stern
+    # r_stern = 1.0
+    # index = dist == r_stern
+    # field[index] = 3
+    # unit_vec[index, 0] = -vector[index, 0]
+    # unit_vec[index, 1] = -vector[index, 1]
+    # index = (dist < r_stern) & (dist >= 0)
+    # field[index] = 1
+    # value[index] = density * 0.5
+    # value[index] = (density * 0.5 / r_stern) * dist[index]
+
+    r_stern = 1.0
+    index = (dist <= r_stern) & (dist >= 0)
+    field[index] = 7
+    value[index] = density
 
     # dirichlet and no gradient
-    val = ION_DICT[ion_type]["val"].value
-    if val < 0:
-        dirichlet_index = 0
-        no_gradient_index = -1
+    if not True:
+        val = ION_DICT[ion_type]["val"].value
+        if val < 0:
+            dirichlet_index = 0
+            no_gradient_index = -1
+        else:
+            dirichlet_index = -1
+            no_gradient_index = 0
+        field[:, dirichlet_index] = 1
+        value[:, dirichlet_index] = density
+        field[:, no_gradient_index] = 5
+        direction[:, no_gradient_index] = 1 if no_gradient_index == 0 else -1
     else:
-        dirichlet_index = -1
-        no_gradient_index = 0
-    field[:, dirichlet_index] = 1
-    value[:, dirichlet_index] = density
-    field[:, no_gradient_index] = 5
-    direction[:no_gradient_index] = 1 if no_gradient_index == 0 else -1
+        field[:, [0, -1]] = 1
+        value[:, [0, -1]] = density
+    # Dirichlet
     index = dist == -1
     field[index] = 1
     value[index] = 0
@@ -261,9 +282,21 @@ def get_rho(grid: Grid, ion_type, density, dist, vector):
     direction[0, 1:-1] = 1
 
     # r-no-flux
-    field[-1, 1:-1] = 4
-    direction[-1, 1:-1] = -1
+    if True:
+        field[-1, 1:-1] = 4
+        direction[-1, 1:-1] = -1
+    else:
+        index = cp.argwhere(dist == 0)[:, 1]
+        z_min, z_max = index.min(), index.max()
+        # field[-1, 1 : z_min + 1] = 1
+        # value[-1, 1 : z_min + 1] = density
+        # field[-1, z_max:-1] = 1
+        # value[-1, z_max:-1] = density
 
+        field[-1, 1 : z_min + 1] = 6
+        direction[-1, 1 : z_min + 1] = 1
+        field[-1, z_max:-1] = 6
+        direction[-1, z_max:-1] = -1
     index = cp.argwhere(field == 0).astype(CUPY_INT)
     rho.register_points(
         type="inner",
@@ -294,6 +327,18 @@ def get_rho(grid: Grid, ion_type, density, dist, vector):
         type="z-no-gradient",
         index=index,
         direction=direction[index[:, 0], index[:, 1]],
+    )
+    index = cp.argwhere(field == 6).astype(CUPY_INT)
+    rho.register_points(
+        type="z-no-flux",
+        index=index,
+        direction=direction[index[:, 0], index[:, 1]],
+    )
+    index = cp.argwhere(field == 7).astype(CUPY_INT)
+    rho.register_points(
+        type="stern",
+        index=index,
+        density=value[index[:, 0], index[:, 1]],
     )
     return rho
 
