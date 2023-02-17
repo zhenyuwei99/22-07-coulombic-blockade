@@ -104,15 +104,6 @@ class HydrationPotential:
             g = g_ion(dist_ion)
             g = g * cp.log(g) * kBT
             hyd += (signal.fftconvolve(f, g, "valid") - g.sum()) * factor
-        import matplotlib.pyplot as plt
-
-        half_index = x_extend.shape[1] // 2
-        plt.contour(
-            x_extend[:, half_index, :].get(),
-            z_extend[:, half_index, :].get(),
-            f[:, half_index, :].get(),
-        )
-        plt.show()
         half_index = int((hyd.shape[1] - 1) / 2)
         target_slice = (
             slice(half_index, None),
@@ -121,7 +112,6 @@ class HydrationPotential:
         )
         r = cp.sqrt(x[target_slice] ** 2 + y[target_slice] ** 2).astype(CUPY_FLOAT)
         self._hyd_fun_range = [float(r.min()), float(r.max())]
-        # r = cp.array(x[target_slice], CUPY_FLOAT)
         z = cp.array(z[target_slice], CUPY_FLOAT)
         hyd = cp.array(hyd[target_slice], CUPY_FLOAT)
         y = cp.hstack([r.reshape([-1, 1]), z.reshape([-1, 1])])
