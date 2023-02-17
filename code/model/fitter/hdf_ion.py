@@ -13,7 +13,7 @@ import os
 import numpy as np
 import mdpy as md
 from scipy import optimize
-from model.energy import HydrationDistributionFunction
+from model.potential import HydrationDistributionFunction
 
 ion, target = "sod", "hydrogen"
 TRY = False
