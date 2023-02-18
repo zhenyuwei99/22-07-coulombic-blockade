@@ -67,10 +67,10 @@ class NPECylinderSolver:
         self._func_map = {
             "inner": self._get_inner_points,
             "dirichlet": self._get_dirichlet_points,
+            "axial-symmetry": self._get_axial_symmetry_points,
             "r-no-flux": self._get_r_no_flux_points,
             "z-no-flux": self._get_z_no_flux_points,
             "no-flux-inner": self._get_no_flux_inner_points,
-            "axial-symmetry": self._get_axial_symmetry_points,
             "z-no-gradient": self._get_z_no_gradient_points,
             "stern": self._get_stern_points,
         }
@@ -384,26 +384,24 @@ class NPECylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def iterate(self, num_iterations, is_restart=False):
+    def iterate(self, num_iterations, is_restart=False, solver_freq=50):
         self._grid.check_requirement()
         rho = getattr(self._grid.variable, "rho_%s" % self._ion_type)
         self._matrix, self._vector = self._get_equation(rho)
         if is_restart:
             x0 = rho.value.reshape(self._grid.num_points)
-            res, info = spl.gmres(
+            res = spl.gmres(
                 self._matrix,
                 self._vector,
                 x0=x0,
                 maxiter=num_iterations,
-                restart=100,
-            )
+                restart=solver_freq,
+            )[0]
         else:
-            res, info = spl.gmres(
-                self._matrix,
-                self._vector,
-                maxiter=num_iterations,
-                restart=100,
-            )
+            res = spl.gmres(
+                self._matrix, self._vector, maxiter=num_iterations, restart=solver_freq
+            )[0]
+        # res = spl.spsolve(self._matrix, self._vector)
         # res = spl.lsqr(self._matrix, self._vector)[0]
         # res[res < 0] = 0
         rho.value = res.reshape(self._grid.shape)
