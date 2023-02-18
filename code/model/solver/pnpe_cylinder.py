@@ -161,18 +161,18 @@ class PNPECylinderSolver:
 
 
 def get_phi(grid: Grid, voltage):
-    phi = grid.empty_variable()
     voltage = check_quantity_value(voltage, volt)
     voltage = (
         Quantity(voltage, volt * elementary_charge)
         .convert_to(default_energy_unit)
         .value
     )
+    phi = grid.empty_variable()
     field = (grid.zeros_field() - 1).astype(CUPY_INT)
     value = grid.zeros_field().astype(CUPY_FLOAT)
-    dimension = grid.zeros_field().astype(CUPY_INT)
     direction = grid.zeros_field().astype(CUPY_INT)
-    # 0: inner; 1: dirichlet; 2: no-gradient; 3: axial-symmetry
+    # 0: inner; 1: dirichlet; 2: axial-symmetry;
+    # 3: r-no-gradient; 4: z-no-gradient
     # Inner
     field[1:-1, 1:-1] = 0
     index = cp.argwhere(field).astype(CUPY_INT)
@@ -181,16 +181,11 @@ def get_phi(grid: Grid, voltage):
     value[:, 0] = voltage * -0.5
     field[:, -1] = 1  # up
     value[:, -1] = voltage * 0.5
-    # no-gradient
-    if True:
-        field[-1, 1:-1] = 2  # right
-        dimension[-1, 1:-1] = 0
-        direction[-1, 1:-1] = -1
-    else:
-        field[-1, 1:-1] = 1  # right
-        value[-1, 1:-1] = 0
+    # r-no-gradient
+    field[-1, 1:-1] = 3  # right
+    direction[-1, 1:-1] = -1
     # axial symmetry
-    field[0, 1:-1] = 3  # left
+    field[0, 1:-1] = 2  # left
     # Register
     index = cp.argwhere(field == 0).astype(CUPY_INT)
     phi.register_points(
@@ -204,14 +199,19 @@ def get_phi(grid: Grid, voltage):
         value=value[index[:, 0], index[:, 1]],
     )
     index = cp.argwhere(field == 2).astype(CUPY_INT)
+    phi.register_points(type="axial-symmetry", index=index)
+    index = cp.argwhere(field == 3).astype(CUPY_INT)
     phi.register_points(
-        type="no-gradient",
+        type="r-no-gradient",
         index=index,
-        dimension=dimension[index[:, 0], index[:, 1]],
         direction=direction[index[:, 0], index[:, 1]],
     )
-    index = cp.argwhere(field == 3).astype(CUPY_INT)
-    phi.register_points(type="axial-symmetry", index=index)
+    index = cp.argwhere(field == 4).astype(CUPY_INT)
+    phi.register_points(
+        type="z-no-gradient",
+        index=index,
+        direction=direction[index[:, 0], index[:, 1]],
+    )
     return phi
 
 
@@ -342,7 +342,7 @@ def get_epsilon(grid: Grid, dist):
 
 if __name__ == "__main__":
     r0, z0, rs = 15, 25, 2.5
-    voltage = Quantity(1.0, volt)
+    voltage = Quantity(5.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
@@ -365,8 +365,7 @@ if __name__ == "__main__":
         grid.add_field("u_%s" % ion_type, grid.zeros_field(CUPY_FLOAT))
     grid.add_constant("beta", beta)
 
-    solver.iterate(20, 1000, is_restart=False)
-    solver.iterate(20, 1000, is_restart=True)
+    solver.iterate(10, 2000, is_restart=True)
     visualize_concentration(grid, ion_types=ion_types, name="rho-test")
     visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, name="flux-test")
 

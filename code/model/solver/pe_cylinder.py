@@ -30,12 +30,15 @@ class PECylinderSolver:
             - inner: Inner points
             - dirichlet: Dirichlet point
                 - `index`, `value` required
-            - no-gradient: dphi/dz = 0
-                - `index`, `dimension`, `direction` required.
-                - `dimension`: r=0, z=1
-                - `direction`: the index difference between neighbor
             - axial-symmetry: boundary point for r=0
                 - `index` required
+            - r-no-gradient: ∂phi/∂r = 0
+                - `index`, `dimension`, `direction` required.
+                - `direction`: the index difference between neighbor
+            - z-no-gradient: ∂phi/∂z = 0
+                - `index`, `dimension`, `direction` required.
+                - `direction`: the index difference between neighbor
+
 
         ### Field:
         - epsilon: Relative permittivity
