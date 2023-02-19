@@ -67,7 +67,7 @@ class PECylinderSolver:
         # Attribute
         self._inv_epsilon0 = CUPY_FLOAT(0)
         self._epsilon_h2 = self._grid.zeros_field(CUPY_FLOAT)
-        self._epsilon_hr = self._grid.zeros_field(CUPY_FLOAT)
+        self._epsilon_2hr = self._grid.zeros_field(CUPY_FLOAT)
         self._delta_epsilon_h2_r = self._grid.zeros_field(CUPY_FLOAT)
         self._delta_epsilon_h2_z = self._grid.zeros_field(CUPY_FLOAT)
         self._upwind_direction_r = self._grid.zeros_field(CUPY_INT)
@@ -80,21 +80,16 @@ class PECylinderSolver:
         inv_2h2 = CUPY_FLOAT(inv_h2 / 2)
         # Epsilon factor
         self._inv_epsilon0 = NUMPY_FLOAT(-1 / self._grid.constant.epsilon0)
-        self._epsilon_h2 = self._grid.zeros_field(CUPY_FLOAT)
-        self._epsilon_hr = self._grid.zeros_field(CUPY_FLOAT)
-        self._delta_epsilon_h2_r = self._grid.zeros_field(CUPY_FLOAT)
-        self._delta_epsilon_h2_z = self._grid.zeros_field(CUPY_FLOAT)
 
         self._epsilon_h2 = inv_h2 * self._grid.field.epsilon
-        self._epsilon_hr[1:, :] = (
-            inv_h * self._grid.field.epsilon[1:, :] / self._grid.coordinate.r[1:, :]
+        self._epsilon_2hr[1:, :] = (
+            CUPY_FLOAT(0.5 * inv_h)
+            * self._grid.field.epsilon[1:, :]
+            / self._grid.coordinate.r[1:, :]
         )
         self._delta_epsilon_h2_r[1:-1, :] = inv_2h2 * (epsilon[2:, :] - epsilon[:-2, :])
         self._delta_epsilon_h2_z[:, 1:-1] = inv_2h2 * (epsilon[:, 2:] - epsilon[:, :-2])
         # Upwind factor
-        self._upwind_direction_r = self._grid.zeros_field(CUPY_INT)
-        self._upwind_direction_z = self._grid.zeros_field(CUPY_INT)
-
         self._upwind_direction_r[self._delta_epsilon_h2_r > 0] = CUPY_INT(1)
         self._upwind_direction_r[self._delta_epsilon_h2_r < 0] = CUPY_INT(-1)
         self._upwind_direction_z[self._delta_epsilon_h2_z > 0] = CUPY_INT(1)
@@ -138,12 +133,12 @@ class PECylinderSolver:
         )
         # r+1
         plus_index = self._upwind_direction_r[self_index] == 1
-        factor = self._epsilon_h2[self_index] + self._epsilon_hr[self_index]
+        factor = self._epsilon_h2[self_index] + self._epsilon_2hr[self_index]
         factor[plus_index] += conv_term_r[plus_index]
         data.append(factor)
         col.append(row_index + z_shape)
         # r-1
-        factor = self._epsilon_h2[self_index]
+        factor = self._epsilon_h2[self_index] - self._epsilon_2hr[self_index]
         factor[~plus_index] += conv_term_r[~plus_index]
         data.append(factor)
         col.append(row_index - z_shape)
@@ -160,10 +155,7 @@ class PECylinderSolver:
         col.append(row_index - 1)
         # Self
         data.append(
-            -conv_term_r
-            - conv_term_z
-            - self._epsilon_h2[self_index] * CUPY_FLOAT(4)
-            - self._epsilon_hr[self_index]
+            -conv_term_r - conv_term_z - self._epsilon_h2[self_index] * CUPY_FLOAT(4)
         )
         col.append(row_index)
         # Vector
@@ -230,36 +222,20 @@ class PECylinderSolver:
         z_shape = CUPY_INT(self._grid.shape[1])
         self_index = (index[:, 0], index[:, 1])
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
-        for i in range(5):
+        for i in range(3):
             row.append(row_index)
         # r+1
         offset = (z_shape * direction).astype(CUPY_INT)
         data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(4))
         col.append(row_index + offset)
         # r+2
-        data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(-0.5))
+        data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(-1))
         col.append(row_index + offset + offset)
-        # z+1
-        conv_term_z = (
-            self._upwind_direction_z[self_index].astype(CUPY_FLOAT)
-            * self._delta_epsilon_h2_z[self_index]
-        )
-        plus_index = self._upwind_direction_z[self_index] == 1
-        factor = self._epsilon_h2[self_index]
-        factor[plus_index] += conv_term_z[plus_index]
-        data.append(factor)
-        col.append(row_index + 1)
-        # z-1
-        factor = self._epsilon_h2[self_index]
-        factor[~plus_index] += conv_term_z[~plus_index]
-        data.append(factor)
-        col.append(row_index - 1)
         # self
-        data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(-5.5) - conv_term_z)
+        data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(-3))
         col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        vector[row_index] = self._grid.field.rho[self_index] * self._inv_epsilon0
         # Return
         return (
             cp.hstack(data).astype(CUPY_FLOAT),
@@ -273,36 +249,20 @@ class PECylinderSolver:
         z_shape = CUPY_INT(self._grid.shape[1])
         self_index = (index[:, 0], index[:, 1])
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
-        for i in range(5):
+        for i in range(3):
             row.append(row_index)
         # z+1
-        offset = direction
+        offset = direction.astype(CUPY_INT)
         data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(4))
         col.append(row_index + offset)
         # z+2
-        data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(-0.5))
+        data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(-1))
         col.append(row_index + offset + offset)
-        # r+1
-        conv_term_r = (
-            self._upwind_direction_r[self_index].astype(CUPY_FLOAT)
-            * self._delta_epsilon_h2_r[self_index]
-        )
-        plus_index = self._upwind_direction_r[self_index] == 1
-        factor = self._epsilon_h2[self_index]
-        factor[plus_index] += conv_term_r[plus_index]
-        data.append(factor)
-        col.append(row_index + 1)
-        # r-1
-        factor = self._epsilon_h2[self_index]
-        factor[~plus_index] += conv_term_r[~plus_index]
-        data.append(factor)
-        col.append(row_index - 1)
         # self
-        data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(-5.5) - conv_term_r)
+        data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(-3))
         col.append(row_index)
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
-        vector[row_index] = self._grid.field.rho[self_index] * self._inv_epsilon0
         # Return
         return (
             cp.hstack(data).astype(CUPY_FLOAT),

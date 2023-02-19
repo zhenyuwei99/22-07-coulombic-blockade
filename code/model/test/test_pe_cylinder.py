@@ -14,18 +14,15 @@ import cupy as cp
 from mdpy.unit import *
 from model import *
 from model.solver import PECylinderSolver
-from model.core import Grid, GridWriter
+from model.core import Grid, GridWriter, GridParser
 from model.utils import *
-
-PE_CYLINDER_GRID_FILE_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "./data/pe_cylinder.grid"
-)
+from model.test import PE_CYLINDER_GRID_FILE_PATH, NPE_CYLINDER_GRID_FILE_PATH
 
 
 def get_phi(grid: Grid):
     phi = grid.empty_variable()
     voltage = (
-        Quantity(5, volt * elementary_charge).convert_to(default_energy_unit).value
+        Quantity(1, volt * elementary_charge).convert_to(default_energy_unit).value
     )
     field = (grid.zeros_field() - 1).astype(CUPY_INT)
     value = grid.zeros_field().astype(CUPY_FLOAT)
@@ -74,14 +71,19 @@ def get_phi(grid: Grid):
     return phi
 
 
-def get_rho(grid: Grid, r0=2, z0=0):
+def get_rho(grid: Grid, r0=40, z0=35):
     rho = grid.zeros_field()
     charge = -1 / grid.grid_width**grid.num_dimensions
     dist = (grid.coordinate.r - r0) ** 2 + (grid.coordinate.z - z0) ** 2
-    sigma = grid.grid_width / 3
+    sigma = grid.grid_width
     rho = cp.exp(-dist / (2 * sigma**2)) * charge
     rho = grid.zeros_field()
     return rho
+
+
+def get_rho_from_file():
+    grid = GridParser(NPE_CYLINDER_GRID_FILE_PATH).grid
+    return grid.variable.rho_k.value
 
 
 def get_epsilon(grid: Grid, r0, z0):
@@ -104,10 +106,11 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     r0, z0 = 5, 25
-    grid = Grid(grid_width=0.25, r=[0, 50], z=[-100, 100])
+    grid = Grid(grid_width=0.5, r=[0, 50], z=[-100, 100])
     solver = PECylinderSolver(grid=grid)
     grid.add_variable("phi", get_phi(grid))
     grid.add_field("rho", get_rho(grid))
+    # grid.add_field("rho", get_rho_from_file())
     grid.add_field("epsilon", get_epsilon(grid, r0, z0))
 
     s = time.time()
