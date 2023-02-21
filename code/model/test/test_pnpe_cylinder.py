@@ -21,7 +21,7 @@ from model.solver import PNPECylinderSolver
 from model.solver.utils import *
 
 
-def get_phi(grid: Grid, voltage):
+def get_phi(grid: Grid, voltage, dist, unit_vec):
     voltage = check_quantity_value(voltage, volt)
     voltage = (
         Quantity(voltage, volt * elementary_charge)
@@ -45,6 +45,12 @@ def get_phi(grid: Grid, voltage):
     # r-no-gradient
     field[-1, 1:-1] = 3  # right
     direction[-1, 1:-1] = -1
+    # no-gradient inner
+    index = dist == 0
+    index[-1, :] = False
+    field[index] = 5  # right
+    vector[index, 0] = unit_vec[index, 0]
+    vector[index, 1] = unit_vec[index, 1]
     # axial symmetry
     field[0, 1:-1] = 2  # left
     # Register
@@ -73,6 +79,12 @@ def get_phi(grid: Grid, voltage):
     #     index=index,
     #     direction=direction[index[:, 0], index[:, 1]],
     # )
+    index = cp.argwhere(field == 5).astype(CUPY_INT)
+    phi.register_points(
+        type="no-gradient-inner",
+        index=index,
+        unit_vector=vector[index[:, 0], index[:, 1]],
+    )
     return phi
 
 
@@ -92,13 +104,8 @@ def get_rho(grid: Grid, ion_type, density, dist, vector):
     # Inner
     field[1:-1, 1:-1] = 0
 
-    # no-flux
-    # index = dist == 0
-    # field[index] = 3
-    # unit_vec[index, 0] = vector[index, 0]
-    # unit_vec[index, 1] = vector[index, 1]
     # stern
-    # r_stern = 2.0
+    r_stern = 2.0
     # index = dist == r_stern
     # field[index] = 3
     # unit_vec[index, 0] = -vector[index, 0]
@@ -107,6 +114,12 @@ def get_rho(grid: Grid, ion_type, density, dist, vector):
     # field[index] = 1
     # value[index] = density * 0.5
     # value[index] = (density * 0.5 / r_stern) * dist[index]
+
+    # no-flux
+    index = dist == 0
+    field[index] = 3
+    unit_vec[index, 0] = vector[index, 0]
+    unit_vec[index, 1] = vector[index, 1]
 
     # dirichlet and no gradient
     if not True:
@@ -202,23 +215,35 @@ def get_epsilon(grid: Grid, dist):
     return epsilon.astype(CUPY_FLOAT)
 
 
+def get_rho_fixed(grid: Grid, r0=16, z0=0):
+    rho = grid.zeros_field()
+    charge = 1 / grid.grid_width**grid.num_dimensions
+    dist = (grid.coordinate.r - r0) ** 2 + (grid.coordinate.z - z0) ** 2
+    sigma = grid.grid_width
+    rho = cp.exp(-dist / (2 * sigma**2)) * charge
+    rho = grid.zeros_field()
+    return rho
+
+
 if __name__ == "__main__":
     r0, z0, rs = 15, 25, 2.5
-    voltage = Quantity(0.5, volt)
+    voltage = Quantity(1.5, volt)
     density = Quantity(0.15, mol / decimeter**3)
     beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     beta = 1 / beta
     ion_types = ["cl"]
-    grid = Grid(grid_width=0.5, r=[0, 75], z=[-100, 100])
+    ion_types = ["k", "cl"]
+    grid = Grid(grid_width=0.5, r=[0, 150], z=[-100, 100])
     dist, vector = get_pore_distance_and_vector(
         grid.coordinate.r, grid.coordinate.z, r0, z0, rs
     )
 
     solver = PNPECylinderSolver(grid=grid, ion_types=ion_types)
     solver.npe_solver_list[0].is_inverse = True
-    grid.add_variable("phi", get_phi(grid, voltage=voltage))
+    grid.add_variable("phi", get_phi(grid, voltage=voltage, dist=dist, unit_vec=vector))
     grid.add_field("epsilon", get_epsilon(grid, dist))
     grid.add_field("rho", grid.zeros_field(CUPY_FLOAT))
+    grid.add_field("rho_fixed", get_rho_fixed(grid))
     grid.add_field("u_s", grid.zeros_field(CUPY_FLOAT))
     for ion_type in ion_types:
         grid.add_variable(
@@ -227,7 +252,9 @@ if __name__ == "__main__":
         grid.add_field("u_%s" % ion_type, grid.zeros_field(CUPY_FLOAT))
     grid.add_constant("beta", beta)
 
-    solver.iterate(5, 2000, is_restart=True)
+    solver.iterate(5, 5000, is_restart=True)
+    # solver.iterate(10, 2000, is_restart=True)
+    # solver.iterate(10, 1000, is_restart=True)
     # visualize_concentration(grid, ion_types=ion_types, name="rho-test")
     # visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, name="flux-test")
 
