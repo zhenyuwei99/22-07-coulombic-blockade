@@ -61,6 +61,7 @@ class PECylinderSolver:
             "inner": self._get_inner_points,
             "dirichlet": self._get_dirichlet_points,
             "axial-symmetry": self._get_axial_symmetry_points,
+            "no-gradient-inner": self._get_no_gradient_inner_points,
             "r-no-gradient": self._get_r_no_gradient_points,
             "z-no-gradient": self._get_z_no_gradient_points,
         }
@@ -209,6 +210,69 @@ class PECylinderSolver:
         # Vector
         vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
         vector[row_index] = self._grid.field.rho[self_index] * self._inv_epsilon0
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
+
+    def _get_no_gradient_inner_points(self, index, unit_vector):
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
+        self_index = (index[:, 0], index[:, 1])
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        for i in range(3):
+            row.append(row_index)
+        factor_r = self._epsilon_h2[self_index] * self._upwind_direction_r[
+            self_index
+        ].astype(CUPY_FLOAT)
+        factor_z = self._epsilon_h2[self_index] * self._upwind_direction_z[
+            self_index
+        ].astype(CUPY_FLOAT)
+        # vector = cp.abs(unit_vector)
+        # r plus
+        offset = (self._upwind_direction_r[self_index] * z_shape).astype(CUPY_INT)
+        data.append(factor_r * unit_vector[:, 0])
+        col.append(row_index + offset)
+        # z plus
+        offset = self._upwind_direction_z[self_index].astype(CUPY_INT)
+        data.append(factor_z * unit_vector[:, 1])
+        col.append(row_index + offset)
+        # Self
+        data.append(-(factor_r * unit_vector[:, 0] + factor_z * unit_vector[:, 1]))
+        col.append(row_index)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
+        # Return
+        return (
+            cp.hstack(data).astype(CUPY_FLOAT),
+            cp.hstack(row).astype(CUPY_INT),
+            cp.hstack(col).astype(CUPY_INT),
+            vector.astype(CUPY_FLOAT),
+        )
+        data, row, col = [], [], []
+        z_shape = CUPY_INT(self._grid.shape[1])
+        self_index = (index[:, 0], index[:, 1])
+        row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
+        for i in range(4):
+            row.append(row_index)
+        epsilon_h2 = self._epsilon_h2[self_index]
+        # r+1
+        data.append(epsilon_h2 * unit_vector[:, 0])
+        col.append(row_index + z_shape)
+        # r-1
+        data.append(epsilon_h2 * -unit_vector[:, 0])
+        col.append(row_index - z_shape)
+        # z+1
+        data.append(epsilon_h2 * unit_vector[:, 1])
+        col.append(row_index + 1)
+        # z-1
+        data.append(epsilon_h2 * -unit_vector[:, 1])
+        col.append(row_index - 1)
+        # Vector
+        vector = cp.zeros(self._grid.num_points, CUPY_FLOAT)
         # Return
         return (
             cp.hstack(data).astype(CUPY_FLOAT),

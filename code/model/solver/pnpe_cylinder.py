@@ -46,6 +46,7 @@ class PNPECylinderSolver:
         ### Field:
         - epsilon: Relative permittivity
         - rho: Fixed charge density
+        - rho_fixed: Fixed charge density
         - u_[ion]: External potential of [ion]
         - u_s: Steric potential
 
@@ -60,6 +61,7 @@ class PNPECylinderSolver:
         self._grid = grid
         self._ion_types = ion_types
         self._grid.add_requirement("field", "u_s")
+        self._grid.add_requirement("field", "rho_fixed")
         for ion_type in ion_types:
             self._grid.add_requirement("constant", "r_%s" % ion_type)
             self._grid.add_requirement("constant", "z_%s" % ion_type)
@@ -88,6 +90,7 @@ class PNPECylinderSolver:
             self._grid.field.rho += (
                 CUPY_FLOAT(z) * getattr(self.grid.variable, "rho_%s" % ion_type).value
             )
+        self._grid.field.rho += self._grid.field.rho_fixed
 
     def _update_u_s(self):
         self._grid.field.u_s = self._grid.zeros_field(CUPY_FLOAT)
@@ -111,20 +114,45 @@ class PNPECylinderSolver:
         # u += self._grid.field.u_s
         setattr(self._grid.field, "u_%s" % ion_type, u.astype(CUPY_FLOAT))
 
+    # def iterate(self, num_iterations, num_sub_iterations=100, is_restart=False):
+    #     self._grid.check_requirement()
+    #     for iterations in range(num_iterations):
+    #         self._pre_res = []
+    #         self._pre_res.append(self._grid.variable.phi.value)
+    #         # target = (
+    #         #     self._ion_types[::-1] if iterations % 2 == 0 else self._ion_types[:]
+    #         # )
+    #         target = self._ion_types  # if iterations % 10 <= 5 else self._ion_types[:]
+    #         for index, ion_type in enumerate(target):
+    #             self._update_rho()
+    #             self._update_u_s()
+    #             self._pe_solver.iterate(
+    #                 num_iterations=num_sub_iterations, is_restart=is_restart
+    #             )
+    #             self._update_u_ion(ion_type=ion_type)
+    #             self._pre_res.append(
+    #                 getattr(self._grid.variable, "rho_%s" % ion_type).value
+    #             )
+    #             self._npe_solver_list[index].iterate(
+    #                 num_iterations=num_sub_iterations, is_restart=is_restart
+    #             )
+    #         print(self.residual)
+    #     for ion_type in self._ion_types:
+    #         self._update_u_ion(ion_type=ion_type)
+
     def iterate(self, num_iterations, num_sub_iterations=100, is_restart=False):
         self._grid.check_requirement()
+        # Initial diffusion
         for iterations in range(num_iterations):
             self._pre_res = []
             self._pre_res.append(self._grid.variable.phi.value)
+            self._pe_solver.iterate(num_iterations=5000, is_restart=is_restart)
             target = (
                 self._ion_types[::-1] if iterations % 2 == 5 else self._ion_types[:]
             )
+            target = self._ion_types
             for index, ion_type in enumerate(target):
-                self._update_rho()
-                self._update_u_s()
-                self._pe_solver.iterate(
-                    num_iterations=num_sub_iterations, is_restart=is_restart
-                )
+                # self._update_u_s()
                 self._update_u_ion(ion_type=ion_type)
                 self._pre_res.append(
                     getattr(self._grid.variable, "rho_%s" % ion_type).value
@@ -132,9 +160,21 @@ class PNPECylinderSolver:
                 self._npe_solver_list[index].iterate(
                     num_iterations=num_sub_iterations, is_restart=is_restart
                 )
+            self._update_rho()
+            self._update_u_s()
             print(self.residual)
         for ion_type in self._ion_types:
             self._update_u_ion(ion_type=ion_type)
+
+    def _iterate_single_ion(self, ion_type: str, num_sub_iterations):
+        index = self._ion_types.index(ion_type)
+        solver = self._npe_solver_list[index]
+        print(index)
+        for i in range(5):
+            self._update_rho()
+            self._pe_solver.iterate(num_iterations=num_sub_iterations, is_restart=True)
+            self._update_u_ion(ion_type=ion_type)
+            solver.iterate(num_iterations=num_sub_iterations, is_restart=True)
 
     @property
     def grid(self) -> Grid:
