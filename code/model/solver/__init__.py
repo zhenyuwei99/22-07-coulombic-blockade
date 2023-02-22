@@ -12,6 +12,8 @@ from model.solver.npe_cylinder import NPECylinderSolver
 from model.solver.pnpe_cylinder import PNPECylinderSolver
 from model.solver.mpnpe_cylinder import MPNPECylinderSolver
 
+from model.solver.pe_pinn_cylinder import PEPINNCylinderSolver
+
 __all__ = [
     "PECylinderSolver",
     "NPECylinderSolver",
