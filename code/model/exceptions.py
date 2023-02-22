@@ -42,3 +42,14 @@ class GridPoorDefinedError(Exception):
     """
 
     pass
+
+
+class DataSetPoorDefinedError(Exception):
+    """This error occurs when:
+    - DataSet's label or coefficient function has not been defined
+
+    Used in:
+    - model.core.dataset
+    """
+
+    pass
