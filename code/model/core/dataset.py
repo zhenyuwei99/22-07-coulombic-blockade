@@ -38,14 +38,18 @@ class DataSet:
     def add_labels(self, name, **label_data):
         if name in self._label.keys():
             for key, val in label_data.items():
-                dtype = TORCH_INT if key == "index" else TORCH_FLOAT
-                val = val.type(dtype).to(self._device)
-                self._label[name][key] = tc.vstack([self._label[name][key], val])
+                if key == "index":
+                    self._label[name][key].extend(list(val.reshape(-1).cpu().numpy()))
+                else:
+                    val = val.type(TORCH_FLOAT).to(self._device)
+                    self._label[name][key] = tc.vstack([self._label[name][key], val])
         else:
             cur_label = {}
             for key, val in label_data.items():
-                dtype = TORCH_INT if key == "index" else TORCH_FLOAT
-                cur_label[key] = val.type(dtype).to(self._device)
+                if key == "index":
+                    cur_label[key] = list(val.reshape(-1).cpu().numpy())
+                else:
+                    cur_label[key] = val.type(TORCH_FLOAT).to(self._device)
             self._label[name] = cur_label
 
     def add_coefficient_fun(self, name, fun):
@@ -68,7 +72,8 @@ class DataSet:
         self._sample = self._sample.to(self._device)
         for key_label, val in self._label.items():
             for key_data, tensor in val.items():
-                self._label[key_label][key_data] = tensor.to(self._device)
+                if key_data != "index":
+                    self._label[key_label][key_data] = tensor.to(self._device)
 
     @property
     def x(self):

@@ -15,7 +15,11 @@ import torch.nn as nn
 
 class Net(nn.Module):
     def __init__(
-        self, input_dim: int, hidden_dim_list: list[int], output_dim: int
+        self,
+        input_dim: int,
+        hidden_dim_list: list[int],
+        output_dim: int,
+        device=tc.device("cuda", 0),
     ) -> None:
         super(Net, self).__init__()
         self._input_dim = input_dim
@@ -23,19 +27,21 @@ class Net(nn.Module):
         self._num_hidden_layers = len(hidden_dim_list)
         self._output_dim = output_dim
         self._module_list = nn.ModuleList(self._get_layer_list())
+        self.to(device)
 
     def _get_layer_list(self):
+        activate = nn.Sigmoid
         layer_list = []
         layer_list.append(nn.Linear(self._input_dim, self._hidden_dim_list[0]))
-        layer_list.append(nn.Sigmoid())
-        for index in range(1, self._num_hidden_layers - 1):
+        layer_list.append(activate())
+        for index in range(self._num_hidden_layers - 1):
             layer_list.append(
                 nn.Linear(
                     self._hidden_dim_list[index],
                     self._hidden_dim_list[index + 1],
                 )
             )
-            layer_list.append(nn.Sigmoid())
+            layer_list.append(activate())
         layer_list.append(nn.Linear(self._hidden_dim_list[-1], self._output_dim))
         return layer_list
 
