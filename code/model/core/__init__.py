@@ -11,5 +11,6 @@ from model.core.grid import Grid, Variable
 from model.core.grid_parser import GridParser
 from model.core.grid_writer import GridWriter
 from model.core.net import Net
+from model.core.dataset import DataSet
 
-__all__ = ["Grid", "Variable", "GridParser", "GridWriter", "Net"]
+__all__ = ["Grid", "Variable", "GridParser", "GridWriter", "Net", "DataSet"]
