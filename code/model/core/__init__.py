@@ -10,5 +10,6 @@ copyright : (C)Copyright 2021-present, mdpy organization
 from model.core.grid import Grid, Variable
 from model.core.grid_parser import GridParser
 from model.core.grid_writer import GridWriter
+from model.core.net import Net
 
-__all__ = ["Grid", "Variable", "GridParser", "GridWriter"]
+__all__ = ["Grid", "Variable", "GridParser", "GridWriter", "Net"]
