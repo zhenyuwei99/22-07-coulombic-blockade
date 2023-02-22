@@ -11,6 +11,7 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 
 import torch as tc
 from model import *
+from model.exceptions import *
 
 
 class DataSet:
@@ -51,7 +52,16 @@ class DataSet:
         self._coefficient_fun[name] = fun
 
     def get_coefficient(self, name):
+        if not name in self._coefficient_fun.keys():
+            raise DataSetPoorDefinedError(
+                "Coefficient function %s has not defined." % name
+            )
         return self._coefficient_fun[name](self._sample)
+
+    def get_label(self, name):
+        if not name in self._label.keys():
+            raise DataSetPoorDefinedError("Label %s has not defined." % name)
+        pass
 
     def to(self, device):
         self._device = device

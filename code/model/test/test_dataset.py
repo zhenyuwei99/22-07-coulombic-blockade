@@ -9,10 +9,12 @@ contact : zhenyuwei99@gmail.com
 copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
+import pytest
 import torch as tc
 import numpy as np
 from torch.autograd import grad
 from model.core import DataSet
+from model.exceptions import *
 
 
 class TestDataSet:
@@ -28,7 +30,10 @@ class TestDataSet:
         assert self.dataset.x.requires_grad == True
 
     def test_exceptions(self):
-        pass
+        with pytest.raises(DataSetPoorDefinedError):
+            self.dataset.get_coefficient("phi")
+        with pytest.raises(DataSetPoorDefinedError):
+            self.dataset.get_label("inner")
 
     def test_add_samples(self):
         h = 0.5
