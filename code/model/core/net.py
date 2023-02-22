@@ -15,39 +15,32 @@ import torch.nn as nn
 
 class Net(nn.Module):
     def __init__(
-        self, input_dim: int, hidden_dim_list: list[int], output_dim: int, device
+        self, input_dim: int, hidden_dim_list: list[int], output_dim: int
     ) -> None:
         super(Net, self).__init__()
         self._input_dim = input_dim
         self._hidden_dim_list = hidden_dim_list
         self._num_hidden_layers = len(hidden_dim_list)
-        self._device = device
         self._output_dim = output_dim
-        self._layer_list = self._get_layer_list()
+        self._module_list = nn.ModuleList(self._get_layer_list())
 
     def _get_layer_list(self):
         layer_list = []
-        layer_list.append(
-            nn.Linear(self._input_dim, self._hidden_dim_list[0], device=self._device)
-        )
+        layer_list.append(nn.Linear(self._input_dim, self._hidden_dim_list[0]))
         layer_list.append(nn.Sigmoid())
         for index in range(1, self._num_hidden_layers - 1):
             layer_list.append(
                 nn.Linear(
                     self._hidden_dim_list[index],
                     self._hidden_dim_list[index + 1],
-                    device=self._device,
                 )
             )
             layer_list.append(nn.Sigmoid())
-        layer_list.append(
-            nn.Linear(self._hidden_dim_list[-1], self._output_dim, device=self._device)
-        )
+        layer_list.append(nn.Linear(self._hidden_dim_list[-1], self._output_dim))
         return layer_list
 
     def forward(self, x: tc.Tensor):
         y = x
-        for layer in self._layer_list:
-            y = layer(y)
-        y.requires_grad_(True)
+        for module in self._module_list:
+            y = module(y)
         return y
