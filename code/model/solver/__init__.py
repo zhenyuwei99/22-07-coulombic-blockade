@@ -14,6 +14,7 @@ from model.solver.npe_cartesian import NPECartesianSolver
 from model.solver.npe_cylinder import NPECylinderSolver
 
 from model.solver.pnpe_cylinder import PNPECylinderSolver
+from model.solver.pnpe_newton_cylinder import PNPENewtonCylinderSolver
 
 from model.solver.mpnpe_cylinder import MPNPECylinderSolver
 
