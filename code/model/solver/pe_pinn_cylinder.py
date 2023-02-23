@@ -10,10 +10,7 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 """
 
 import torch as tc
-import torch.nn as nn
 import torch.optim as optim
-import cupy as cp
-import numpy as np
 from torch.autograd import grad
 from mdpy.unit import *
 from model import *
