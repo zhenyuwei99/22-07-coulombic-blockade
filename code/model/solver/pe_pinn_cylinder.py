@@ -39,7 +39,7 @@ class PEPINNCylinderSolver:
         self._dphi_dr, self._dphi_dz = tc.tensor([]), tc.tensor([])
         self._dphi_dr2, self._dphi_dz2 = tc.tensor([]), tc.tensor([])
 
-    def _update_coefficient(self, dataset: DataSet):
+    def _get_loss(self, dataset: DataSet):
         self._rho = dataset.get_coefficient("rho")
         self._epsilon = dataset.get_coefficient("epsilon")
         d_epsilon_dx = grad(
@@ -52,8 +52,6 @@ class PEPINNCylinderSolver:
         self._depsilon_dz = d_epsilon_dx[:, 1]
         self._depsilon_dr[tc.isnan(self._depsilon_dr)] = 0
         self._depsilon_dz[tc.isnan(self._depsilon_dz)] = 0
-
-    def _get_loss(self, dataset: DataSet):
         self._phi = self._net(dataset.x)
         self._x = dataset.x
         dphi_dx = grad(
@@ -136,7 +134,7 @@ class PEPINNCylinderSolver:
         for epoch in range(num_epochs):
             optimizer.zero_grad()
             loss = self._get_loss(dataset)
-            loss.backward(retain_graph=True)
+            loss.backward()
             if epoch % 10 == 0:
                 print(epoch, loss)
             optimizer.step()
