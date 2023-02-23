@@ -126,7 +126,7 @@ if __name__ == "__main__":
     device = tc.device("cuda")
     voltage = Quantity(2, volt)
     r0, z0, rs = 5, 25, 5
-    net = Net(2, [64, 512, 128, 64], 1, device=device)
+    net = Net(2, [128, 512, 256, 128, 32], 1, device=device)
     net.apply(weights_init)
     dataset = get_dataset(voltage, r0, z0, rb, zb)
     dataset.add_coefficient_fun("rho", rho)
@@ -136,7 +136,7 @@ if __name__ == "__main__":
     # plt.plot(x[:, 0].numpy(), x[:, 1].numpy(), ".")
     # plt.show()
     solver = PEPINNCylinderSolver(net=net, device=device)
-    solver.train(dataset=dataset, num_epochs=500, lr=5e-4)
+    solver.train(dataset=dataset, num_epochs=1000, lr=5e-4)
     # solver.train(dataset=dataset, num_epochs=500, lr=1e-4)
 
     r, z = tc.meshgrid(
