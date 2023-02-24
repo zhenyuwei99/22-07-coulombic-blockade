@@ -136,7 +136,7 @@ class PNPENewtonCylinderSolver:
         return CUPY_INT((index + 1) * self._grid.num_points)
 
     def _get_equation(self):
-        self._update_npe_factor()
+        self._update_variable_factor()
         data, row, col = [], [], []
         vector = cp.zeros(self._num_variables, CUPY_FLOAT)
         for key, val in self._grid.variable.phi.points.items():
@@ -145,14 +145,14 @@ class PNPENewtonCylinderSolver:
             row.append(res[1])
             col.append(res[2])
             vector += res[3]
-        for ion_type in self._ion_types:
-            rho = getattr(self._grid.variable, "rho_" + ion_type)
-            for key, val in rho.points.items():
-                res = self._func_map[key](ion_type, **val)
-                data.append(res[0])
-                row.append(res[1])
-                col.append(res[2])
-                vector += res[3]
+        # for ion_type in self._ion_types:
+        #     rho = getattr(self._grid.variable, "rho_" + ion_type)
+        #     for key, val in rho.points.items():
+        #         res = self._func_map[key](ion_type, **val)
+        #         data.append(res[0])
+        #         row.append(res[1])
+        #         col.append(res[2])
+        #         vector += res[3]
         # Matrix
         data = cp.hstack(data).astype(CUPY_FLOAT)
         row = cp.hstack(row).astype(CUPY_INT)
@@ -165,7 +165,7 @@ class PNPENewtonCylinderSolver:
         # Return
         return matrix.tocsr(), vector.astype(CUPY_FLOAT)
 
-    def _update_factor(self):
+    def _update_constant_factor(self):
         self._inv_2hr[1:, :] = (
             CUPY_FLOAT(0.5 * self._inv_h) / self._grid.coordinate.r[1:, :]
         )
@@ -191,40 +191,33 @@ class PNPENewtonCylinderSolver:
             self._pe_upwind_z[self_index].astype(CUPY_FLOAT)
             * self._grid.field.depsilon_dz[self_index]
         )
-        phi = self._grid.variable.phi.value
-        pred = cp.zeros(index.shape[0])
         # phi r+1
-        plus_index = self._pe_upwind_r[self_index] == 1
+        plus_index_r = self._pe_upwind_r[self_index] == 1
         factor = self._epsilon_h2[self_index] + self._epsilon_2hr[self_index]
-        factor[plus_index] += conv_term_r[plus_index]
+        factor[plus_index_r] += conv_term_r[plus_index_r]
         data.append(factor)
         col.append(row_index + z_shape)
-        pred += factor * phi[index[:, 0] + 1, index[:, 1]]
         # phi r-1
         factor = self._epsilon_h2[self_index] - self._epsilon_2hr[self_index]
-        factor[~plus_index] += conv_term_r[~plus_index]
+        factor[~plus_index_r] += conv_term_r[~plus_index_r]
         data.append(factor)
         col.append(row_index - z_shape)
-        pred += factor * phi[index[:, 0] - 1, index[:, 1]]
         # phi z+1
-        plus_index = self._pe_upwind_z[self_index] == 1
+        plus_index_z = self._pe_upwind_z[self_index] == 1
         factor = self._epsilon_h2[self_index]
-        factor[plus_index] += conv_term_z[plus_index]
+        factor[plus_index_z] += conv_term_z[plus_index_z]
         data.append(factor)
         col.append(row_index + 1)
-        pred += factor * phi[index[:, 0], index[:, 1] + 1]
         # phi z-1
         factor = self._epsilon_h2[self_index]
-        factor[~plus_index] += conv_term_z[~plus_index]
+        factor[~plus_index_z] += conv_term_z[~plus_index_z]
         data.append(factor)
         col.append(row_index - 1)
-        pred += factor * phi[index[:, 0], index[:, 1] - 1]
         # Self
         data.append(
             -conv_term_r - conv_term_z - self._epsilon_h2[self_index] * CUPY_FLOAT(4)
         )
         col.append(row_index)
-        pred += factor * phi[self_index]
         # c
         for ion_type in self._ion_types:
             row_offset = self._get_offset(ion_type)
@@ -233,10 +226,30 @@ class PNPENewtonCylinderSolver:
             data.append(factor)
             col.append(row_index + row_offset)
             row.append(row_index)
-            pred += (
-                factor
-                * getattr(self._grid.variable, "rho_" + ion_type).value[self_index]
-            )
+        # Prediction
+        phi = self._grid.variable.phi.value
+        r_plus, r_minus = (index[:, 0] + 1, index[:, 1]), (index[:, 0] - 1, index[:, 1])
+        z_plus, z_minus = (index[:, 0], index[:, 1] + 1), (index[:, 0], index[:, 1] - 1)
+        pred = self._epsilon_h2[self_index] * (
+            phi[r_plus]
+            + phi[r_minus]
+            + phi[z_plus]
+            + phi[z_minus]
+            - CUPY_FLOAT(4) * phi[self_index]
+        )
+        pred += self._epsilon_2hr[self_index] * (phi[r_plus] - phi[z_plus])
+        pred += conv_term_r * (
+            phi[index[:, 0] + self._pe_upwind_r[self_index], index[:, 1]]
+            - phi[self_index]
+        )
+        pred += conv_term_z * (
+            phi[index[:, 0] + self._pe_upwind_z[self_index], index[:, 1]]
+            - phi[self_index]
+        )
+        for ion_type in self._ion_types:
+            factor = getattr(self._grid.constant, "z_" + ion_type) * self._inv_epsilon0
+            rho = getattr(self._grid.variable, "rho_" + ion_type).value[self_index]
+            pred += factor * rho
         # Vector
         vector = cp.zeros(self._num_variables, CUPY_FLOAT)
         vector[row_index] = -self._grid.field.rho_fixed[self_index] * self._inv_epsilon0
@@ -269,35 +282,28 @@ class PNPENewtonCylinderSolver:
         z_shape = CUPY_INT(self._grid.shape[1])
         self_index = (index[:, 0], index[:, 1])
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
-        for i in range(7):
+        for i in range(3):
             row.append(row_index)
-        phi = self._grid.variable.phi.value
-        pred = cp.zeros(index.shape[0])
         # r+1
         factor = self._epsilon_h2[self_index] * CUPY_FLOAT(8)
         data.append(factor)
         col.append(row_index + z_shape)
-        pred += factor * phi[index[:, 0] + 1, index[:, 1]]
         # r+2
         factor = -self._epsilon_h2[self_index]
         data.append(factor)
         col.append(row_index + CUPY_INT(2 * z_shape))
-        pred += factor * phi[index[:, 0] + 2, index[:, 1]]
         # z+1
         factor = self._epsilon_h2[self_index]
         data.append(factor)
         col.append(row_index + 1)
-        pred += factor * phi[index[:, 0], index[:, 1] + 1]
         # z-1
         factor = self._epsilon_h2[self_index]
         data.append(factor)
         col.append(row_index - 1)
-        pred += factor * phi[index[:, 0], index[:, 1] - 1]
         # Self
         factor = -self._epsilon_h2[self_index] * CUPY_FLOAT(9)
         data.append(factor)
         col.append(row_index)
-        pred += factor * phi[self_index]
         # c
         for ion_type in self._ion_types:
             row_offset = self._get_offset(ion_type)
@@ -305,6 +311,22 @@ class PNPENewtonCylinderSolver:
             factor += cp.zeros(index.shape[0], CUPY_FLOAT)
             data.append(factor)
             col.append(row_index + row_offset)
+            row.append(row_index)
+        # Prediction
+        phi = self._grid.variable.phi.value
+        r_plus, r_plus2 = (index[:, 0] + 1, index[:, 1]), (index[:, 0] + 2, index[:, 1])
+        z_plus, z_minus = (index[:, 0], index[:, 1] + 1), (index[:, 0], index[:, 1] - 1)
+        pred = self._epsilon_h2[self_index] * (
+            phi[r_plus] * CUPY_FLOAT(8)
+            - phi[r_plus2]
+            + phi[z_plus]
+            + phi[z_minus]
+            - CUPY_FLOAT(9) * phi[self_index]
+        )
+        for ion_type in self._ion_types:
+            factor = getattr(self._grid.constant, "z_" + ion_type) * self._inv_epsilon0
+            rho = getattr(self._grid.variable, "rho_" + ion_type).value[self_index]
+            pred += factor * rho
         # Vector
         vector = cp.zeros(self._num_variables, CUPY_FLOAT)
         vector[row_index] = -self._grid.field.rho_fixed[self_index] * self._inv_epsilon0
@@ -324,23 +346,24 @@ class PNPENewtonCylinderSolver:
         row_index = (index[:, 0] * z_shape + index[:, 1]).astype(CUPY_INT)
         for i in range(3):
             row.append(row_index)
-        phi = self._grid.variable.phi.value
-        pred = cp.zeros(index.shape[0])
-        # r+1
-        factor = self._epsilon_h2[self_index] * CUPY_FLOAT(4)
+        # r-1
         data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(4))
         col.append(row_index - z_shape)
-        pred += factor * phi[index[:, 0] - 1, index[:, 1]]
-        # r+2
-        factor = self._epsilon_h2[self_index] * CUPY_FLOAT(-1)
+        # r-2
         data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(-1))
         col.append(row_index - CUPY_INT(2 * z_shape))
-        pred += factor * phi[index[:, 0] - 2, index[:, 1]]
         # self
-        factor = self._epsilon_h2[self_index] * CUPY_FLOAT(-3)
         data.append(self._epsilon_h2[self_index] * CUPY_FLOAT(-3))
         col.append(row_index)
-        pred += factor * phi[self_index]
+        # Prediction
+        phi = self._grid.variable.phi.value
+        r_minus = (index[:, 0] - 1, index[:, 1])
+        r_minus2 = (index[:, 0] - 2, index[:, 1])
+        pred = self._epsilon_h2[self_index] * (
+            phi[r_minus] * CUPY_FLOAT(4)
+            - phi[r_minus2]
+            + phi[self_index] * CUPY_FLOAT(-3)
+        )
         # Vector
         vector = cp.zeros(self._num_variables, CUPY_FLOAT)
         vector[row_index] -= pred
@@ -352,7 +375,7 @@ class PNPENewtonCylinderSolver:
             vector.astype(CUPY_FLOAT),
         )
 
-    def _update_npe_factor(self):
+    def _update_variable_factor(self):
         phi = self._grid.variable.phi.value
         inv_2h = CUPY_FLOAT(0.5 * self._inv_h)
         self._dphi_dr[1:-1, :] = (phi[2:, :] - phi[:-2, :]) * inv_2h
@@ -593,9 +616,9 @@ class PNPENewtonCylinderSolver:
                 self._grid.shape
             )
 
-    def iterate(self, num_iterations, num_jacobian_iterations=2500, solver_freq=300):
+    def iterate(self, num_iterations, num_jacobian_iterations=5000, solver_freq=300):
         self._grid.check_requirement()
-        self._update_factor()
+        self._update_constant_factor()
         for iteration in range(num_iterations):
             print(iteration)
             self._matrix, self._vector = self._get_equation()
