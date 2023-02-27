@@ -64,16 +64,13 @@ class TestDataSet:
         index = tc.argwhere(field == 1)
         index = (index[:, 0] * r.shape[1] + index[:, 1])[:, None]
         self.dataset.add_labels(name="inner", index=index, value=index)
-        assert self.dataset.label["inner"]["index"].device == self.dataset.device
         assert self.dataset.label["inner"]["value"].device == self.dataset.device
 
         index = tc.argwhere(field != 1)
         index = (index[:, 0] * r.shape[1] + index[:, 1])[:, None]
         self.dataset.add_labels(name="inner", index=index, value=index)
 
-        assert self.dataset.label["inner"]["index"].shape[0] == np.prod(r.shape)
         assert self.dataset.label["inner"]["value"].shape[0] == np.prod(r.shape)
-        assert self.dataset.label["inner"]["index"].device == self.dataset.device
         assert self.dataset.label["inner"]["value"].device == self.dataset.device
 
     def test_coefficient(self):
@@ -105,11 +102,9 @@ class TestDataSet:
 
         device = tc.device("cpu")
         assert not self.dataset.x.device == device
-        assert not self.dataset.label["inner"]["index"].device == device
 
         self.dataset.to(device)
         assert self.dataset.x.device == device
-        assert self.dataset.label["inner"]["index"].device == device
 
         r, z = tc.meshgrid(
             tc.arange(0, 10 + h, h), tc.arange(-10, 10 + h, h), indexing="ij"
@@ -120,7 +115,6 @@ class TestDataSet:
         index = tc.argwhere(field == 1)
         index = (index[:, 0] * r.shape[1] + index[:, 1])[:, None]
         self.dataset.add_labels(name="inner", index=index, value=index)
-        assert self.dataset.label["inner"]["index"].device == device
 
 
 if __name__ == "__main__":

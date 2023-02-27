@@ -8,3 +8,6 @@ import os
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 PE_CYLINDER_GRID_FILE_PATH = os.path.join(CUR_DIR, "./data/pe_cylinder.grid")
 NPE_CYLINDER_GRID_FILE_PATH = os.path.join(CUR_DIR, "./data/npe_cylinder.grid")
+PNPE_NEWTON_CYLINDER_GRID_FILE_PATH = os.path.join(
+    CUR_DIR, "./out/pnpe_newton_cylinder.grid"
+)

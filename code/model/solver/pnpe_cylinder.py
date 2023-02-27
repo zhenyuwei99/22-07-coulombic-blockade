@@ -16,8 +16,6 @@ from mdpy.unit import *
 
 from model import *
 from model.core import Grid
-from model.utils import *
-from model.solver.utils import *
 from model.solver.pe_cylinder import PECylinderSolver
 from model.solver.npe_cylinder import NPECylinderSolver
 

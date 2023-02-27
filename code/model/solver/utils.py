@@ -143,3 +143,14 @@ def visualize_flux(
         print("Result save to", img_file_path)
         plt.savefig(img_file_path)
         plt.close()
+
+
+def get_z_flux(grid: Grid, ion_type, u):
+    rho = getattr(grid.variable, "rho_" + ion_type).value
+    d = getattr(grid.constant, "d_" + ion_type)
+    scaled_u = u * grid.constant.beta
+    inv_h = CUPY_FLOAT(1 / grid.grid_width)
+    flux = rho[1:-1, 2:] - rho[1:-1, 1:-1]
+    flux += rho[1:-1, 1:-1] * (scaled_u[1:-1, 2:] - scaled_u[1:-1, 1:-1])
+    flux *= inv_h * d
+    return flux

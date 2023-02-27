@@ -12,7 +12,6 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 import os
 import numpy as np
 import cupy as cp
-import scipy.signal as signal
 from mdpy.utils import check_quantity_value, check_quantity
 from mdpy.unit import *
 
@@ -21,7 +20,6 @@ from model import *
 from model.utils import *
 from model.core import Grid, GridWriter
 from model.potential import HydrationPotential, VDWPotential
-from model.solver.utils import *
 from model.solver.pe_cylinder import PECylinderSolver
 from model.solver.npe_cylinder import NPECylinderSolver
 
