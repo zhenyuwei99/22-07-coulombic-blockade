@@ -23,6 +23,7 @@ class TestNet:
 
     def test_attributes(self):
         device = tc.device("cpu")
+        self.net.to(device)
         for params in self.net.parameters():
             assert params.requires_grad
             assert params.is_leaf
@@ -39,7 +40,8 @@ class TestNet:
 
     def test_forward(self):
         device = tc.device("cpu")
-        x = tc.rand(10, 2, requires_grad=True)
+        x = tc.rand(10, 2, requires_grad=True, device=device)
+        self.net.to(device)
         y = self.net(x)
         assert x.device == device
         assert y.device == device
