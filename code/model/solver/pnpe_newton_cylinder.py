@@ -80,7 +80,7 @@ class PNPENewtonCylinderSolver:
         beta = check_quantity_value(
             check_quantity(temperature, kelvin) * KB, default_energy_unit
         )
-        self._grid.add_constant("beta", beta)
+        self._grid.add_constant("beta", CUPY_FLOAT(1 / beta))
         for ion_type in self._ion_types:
             self._grid.add_constant(
                 self._getattr_name("r", ion_type),
@@ -422,7 +422,7 @@ class PNPENewtonCylinderSolver:
         # Upwind
         self_index = (index[:, 0], index[:, 1])
         upwind_r = CUPY_FLOAT(1)
-        upwind_z = 1  # CUPY_FLOAT(-z / np.abs(z))
+        upwind_z = CUPY_FLOAT(z / np.abs(z))
         conv_term_r = upwind_r * self._dphi_dr[self_index] * alpha_h
         conv_term_z = upwind_z * self._dphi_dz[self_index] * alpha_h
         # Index
@@ -538,7 +538,7 @@ class PNPENewtonCylinderSolver:
             row.append(row_index)
         # Upwind
         self_index = (index[:, 0], index[:, 1])
-        upwind_z = CUPY_FLOAT(-z / np.abs(z))
+        upwind_z = CUPY_FLOAT(z / np.abs(z))
         conv_term_z = upwind_z * self._dphi_dz[self_index] * alpha_h
         # Index
         z_upwind_plus = (index[:, 0], index[:, 1] + CUPY_INT(upwind_z))
@@ -702,19 +702,7 @@ class PNPENewtonCylinderSolver:
             )
             # rho.value[rho.value <= 0] = 0
 
-    def _guess_initial_rho(self):
-        phi = self._grid.variable.phi.value
-        for ion_type in self._ion_types:
-            z = getattr(self._grid.constant, "z_" + ion_type)
-            rho = getattr(self._grid.variable, "rho_" + ion_type)
-            alpha = z * self._grid.constant.beta
-            rho_bulk = rho.value[0, 0]
-            rho.value[1:-1, 1:-1] = rho_bulk * cp.exp(-alpha * phi[1:-1, 1:-1])
-            index = rho.points["npe-dirichlet"]["index"]
-            value = rho.points["npe-dirichlet"]["value"]
-            rho.value[index[:, 0], [index[:, 1]]] = value
-
-    def iterate(self, num_iterations, num_jacobian_iterations=5000, solver_freq=200):
+    def iterate(self, num_iterations, num_jacobian_iterations=5000, solver_freq=250):
         self._grid.check_requirement()
         self._update_constant_factor()
         for iteration in range(num_iterations):
@@ -725,5 +713,7 @@ class PNPENewtonCylinderSolver:
                 maxiter=num_jacobian_iterations,
                 restart=solver_freq,
             )[0]
+            residual = self._matrix.dot(res) - self._vector
+            residual = cp.abs(residual).mean()
             self._assign_res(res)
-            print(iteration, cp.abs(res).mean())
+            print(iteration, residual, cp.abs(res).mean())
