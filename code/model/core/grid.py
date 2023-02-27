@@ -110,16 +110,7 @@ class Grid:
         # Set grid information and coordinate
         self._coordinate_label = list(coordinate_range.keys())
         self._coordinate_range = np.array(list(coordinate_range.values()), NUMPY_FLOAT)
-        grid = [
-            cp.arange(
-                start=value[0],
-                stop=value[1] + grid_width,
-                step=grid_width,
-                dtype=CUPY_FLOAT,
-            )
-            for value in coordinate_range.values()
-        ]
-        grid = cp.meshgrid(*grid, indexing="ij")
+        grid = self._meshing(coordinate_range)
         self._shape = list(grid[0].shape)
         self._inner_shape = [i - 2 for i in self._shape]
         for index, key in enumerate(self._coordinate_label):
@@ -131,6 +122,28 @@ class Grid:
         self._num_dimensions = len(self._coordinate_label)
         # Initialize requirement
         self._requirement = {"variable": [], "field": [], "constant": []}
+
+    def _meshing(self, coordinate_range):
+        grid = []
+        for value in coordinate_range.values():
+            if value[0] != -value[1]:
+                grid.append(
+                    cp.arange(
+                        start=value[0],
+                        stop=value[1] + self._grid_width,
+                        step=self._grid_width,
+                        dtype=CUPY_FLOAT,
+                    )
+                )
+            else:
+                cur_coordinate = cp.arange(
+                    start=0,
+                    stop=value[1] + self._grid_width,
+                    step=self._grid_width,
+                    dtype=CUPY_FLOAT,
+                )
+                grid.append(cp.hstack([-cur_coordinate[:1:-1], cur_coordinate]))
+        return cp.meshgrid(*grid, indexing="ij")
 
     def set_requirement(
         self,
