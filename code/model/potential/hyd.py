@@ -11,15 +11,23 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 
 import os
 import cupy as cp
-import cupyx.scipy.sparse as sp
 import cupyx.scipy.signal as signal
 import cupyx.scipy.interpolate as interpolate
-from model.core import Grid
+import torch as tc
+import torch.optim as optim
+import numba as nb
+import numba.cuda as cuda
+from model.core import Grid, Net
 from model.utils import *
 from model.potential.hdf import HydrationDistributionFunction
 
 RCUT = 12
 HDF_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/hdf")
+
+
+class HydrationPotential1:
+    def __init__(self, r_cut=RCUT, temperature=300, hdf_dir: str = HDF_DIR) -> None:
+        pass
 
 
 class HydrationPotential:
@@ -48,12 +56,13 @@ class HydrationPotential:
             self._r_range[0] - self._r_cut,
             self._r_range[1] + self._r_cut,
         ]
-        self._z_range = [0, self._z0 + self._r_cut * 2]
+        self._z_range = [0, self._z0 + self._r_cut * 3]
         self._z_extend_range = [
             self._z_range[0] - self._r_cut,
             self._z_range[1] + self._r_cut,
         ]
-        self._hyd_fun_range = []
+        self._hyd_r_range = []
+        self._hyd_z_range = []
         self._target = ["oxygen", "hydrogen"]
         self._target = ["oxygen"]
         self._n_bulk = (
@@ -61,7 +70,12 @@ class HydrationPotential:
             .convert_to(1 / default_length_unit**3)
             .value
         )
-        self._hyd_fun = self._get_interpolate()
+        self._assign_data = cuda.jit(
+            nb.void(
+                NUMBA_INT[:, :], NUMBA_FLOAT[:, :], NUMBA_FLOAT[:, :], NUMBA_FLOAT[:, :]
+            )
+        )(self._assign_data_kernel)
+        self._hyd_fun = self._get_fun()
 
     def _get_mesh_points(self, r_range, z_range, grid_width):
         x = cp.arange(0, r_range[1] + grid_width, grid_width, CUPY_FLOAT)
@@ -72,7 +86,7 @@ class HydrationPotential:
         x, y, z = cp.meshgrid(x, x, z, indexing="ij")
         return x.astype(CUPY_FLOAT), y.astype(CUPY_FLOAT), z.astype(CUPY_FLOAT)
 
-    def _get_interpolate(self):
+    def _get_fun(self):
         kBT = CUPY_FLOAT(
             (Quantity(-self._temperature, kelvin) * KB)
             .convert_to(default_energy_unit)
@@ -100,31 +114,65 @@ class HydrationPotential:
             )
             g_pore = HydrationDistributionFunction(json_file_path=pore_file_path)
             g_ion = HydrationDistributionFunction(json_file_path=ion_file_path)
-            f = g_pore(dist1) * g_pore(dist2)
+            f = g_pore(dist1)  # * g_pore(dist2)
             g = g_ion(dist_ion)
             g = g * cp.log(g) * kBT
             hyd += (signal.fftconvolve(f, g, "valid") - g.sum()) * factor
-        half_index = int((hyd.shape[1] - 1) / 2)
-        target_slice = (
-            slice(half_index, None),
-            slice(half_index - 2, half_index + 3),
-            slice(None, None),
+
+        r = cp.sqrt(x**2 + y**2).astype(CUPY_FLOAT)
+        print(r.max())
+        x = cp.hstack([r.reshape(-1, 1), z.reshape(-1, 1)]).astype(CUPY_FLOAT)
+        y = hyd.reshape(-1, 1).astype(CUPY_FLOAT)
+        self._hyd_r_range = [0, r.max().get()]
+        self._hyd_z_range = [0, self._z0 + 2 * self._r_cut]
+        r, z = cp.meshgrid(
+            cp.arange(
+                self._hyd_r_range[0],
+                self._hyd_r_range[1] + self._grid_width,
+                self._grid_width,
+            ),
+            cp.arange(
+                self._hyd_z_range[0],
+                self._hyd_z_range[1] + self._grid_width,
+                self._grid_width,
+            ),
+            indexing="ij",
         )
-        r = cp.sqrt(x[target_slice] ** 2 + y[target_slice] ** 2).astype(CUPY_FLOAT)
-        self._hyd_fun_range = [float(r.min()), float(r.max())]
-        z = cp.array(z[target_slice], CUPY_FLOAT)
-        hyd = cp.array(hyd[target_slice], CUPY_FLOAT)
+        print(r.max())
+        num_r, num_z = r.shape
+        index = x / cp.array([self._hyd_r_range[1], self._hyd_z_range[1]])
+        index *= cp.array([num_r, num_z]) - 1
+        index = cp.round(index).astype(CUPY_INT)
+        index[:, 0][index[:, 0] >= num_r] = -1
+        index[:, 1][index[:, 1] >= num_z] = -1
+        hyd = cp.zeros_like(r, CUPY_FLOAT)
+        counts = cp.zeros_like(r, CUPY_FLOAT)
+
+        thread_per_block = 256
+        block_per_grid = int(np.ceil(x.shape[0] / thread_per_block))
+        self._assign_data[block_per_grid, thread_per_block](index, y, hyd, counts)
+        hyd = hyd / counts
+
+        c = plt.contour(r.get(), z.get(), hyd.get(), 200)
+        plt.colorbar(c)
+        plt.show()
+
         y = cp.hstack([r.reshape([-1, 1]), z.reshape([-1, 1])])
         d = hyd.reshape([-1, 1])
         index = cp.unique(y[:, 0] + y[:, 1] * 1j, return_index=True)[1]
         hyd_fun = interpolate.RBFInterpolator(y=y[index], d=d[index])
         return hyd_fun
-        x, y, z = self._get_mesh_points(self._r_range, self._z_range, 0.2)
-        half_index = int((hyd.shape[1] - 1) / 2)
-        r = cp.array(x[:, half_index, :], CUPY_FLOAT)
-        z = cp.array(z[:, half_index, :], CUPY_FLOAT)
-        y = cp.hstack([r.reshape([-1, 1]), z.reshape([-1, 1])])
-        return (r, z, cp.array(hyd_fun(y).reshape(r.shape)))
+
+    @staticmethod
+    def _assign_data_kernel(index, data, target, counts):
+        thread_id = cuda.grid(1)
+        if thread_id >= index.shape[0]:
+            return
+        i = index[thread_id, 0]
+        j = index[thread_id, 1]
+        if i != -1 and j != -1:
+            cuda.atomic.add(target, (i, j), data[thread_id, 0])
+            cuda.atomic.add(counts, (i, j), NUMBA_FLOAT(1))
 
     def __call__(self, grid: Grid) -> cp.ndarray:
         r = grid.coordinate.r
@@ -132,18 +180,18 @@ class HydrationPotential:
         # Inner point
         hyd = grid.zeros_field(CUPY_FLOAT)
         area1 = (
-            (r <= self._hyd_fun_range[1])
-            & (r >= self._hyd_fun_range[0])
-            & (z <= self._z_range[1])
-            & (z >= self._z_range[0])
+            (r <= self._hyd_r_range[1])
+            & (r >= self._hyd_r_range[0])
+            & (z <= self._hyd_z_range[1])
+            & (z >= self._hyd_z_range[0])
         )
         y = cp.hstack([r[area1].reshape([-1, 1]), z[area1].reshape([-1, 1])])
         hyd[area1] = self._hyd_fun(y).reshape(r[area1].shape)
         area2 = (
-            (r <= self._hyd_fun_range[1])
-            & (r >= self._hyd_fun_range[0])
-            & (z >= -self._z_range[1])
-            & (z <= -self._z_range[0])
+            (r <= self._hyd_r_range[1])
+            & (r >= self._hyd_r_range[0])
+            & (z >= -self._hyd_z_range[1])
+            & (z <= -self._hyd_z_range[0])
         )
         y = cp.hstack([r[area2].reshape([-1, 1]), -z[area2].reshape([-1, 1])])
         hyd[area2] = self._hyd_fun(y).reshape(r[area2].shape)
@@ -168,16 +216,19 @@ class HydrationPotential:
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    hyd = HydrationPotential(r0=15.16, z0=25, rs=2, ion_type="pot")
+    hyd = HydrationPotential(r0=25.16, z0=25, rs=2, ion_type="pot")
 
     beta = 1 / (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
     # hyd *= beta
 
-    r0, z0, rs = 8.15, 25, 5
     grid = Grid(grid_width=0.5, r=[0, 50], z=[-100, 100])
     energy = hyd(grid)
 
-    # plt.plot(grid.coordinate.r[:, 0].get(), energy[:, 0].get(), ".-")
-    c = plt.contour(grid.coordinate.r.get(), grid.coordinate.z.get(), energy.get(), 200)
-    plt.colorbar(c)
+    half_index = grid.shape[1] // 2
+    plt.plot(grid.coordinate.r[:, half_index].get(), energy[:, half_index].get(), ".-")
+    # plt.plot(grid.coordinate.z[50, :].get(), energy[50, :].get(), ".-")
+    # c = plt.contourf(
+    #     grid.coordinate.r.get(), grid.coordinate.z.get(), energy.get(), 200
+    # )
+    # plt.colorbar(c)
     plt.show()
