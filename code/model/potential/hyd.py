@@ -14,6 +14,7 @@ import cupy as cp
 import cupyx.scipy.signal as signal
 import cupyx.scipy.interpolate as interpolate
 import torch as tc
+import torch.nn as nn
 import torch.optim as optim
 import numba as nb
 import numba.cuda as cuda
@@ -25,9 +26,10 @@ RCUT = 12
 HDF_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/hdf")
 
 
-class HydrationPotential1:
-    def __init__(self, r_cut=RCUT, temperature=300, hdf_dir: str = HDF_DIR) -> None:
-        pass
+def weights_init(m):
+    if isinstance(m, nn.Linear):
+        nn.init.xavier_normal_(m.weight)
+        nn.init.constant_(m.bias, 0.0)
 
 
 class HydrationPotential:
@@ -120,7 +122,6 @@ class HydrationPotential:
             hyd += (signal.fftconvolve(f, g, "valid") - g.sum()) * factor
 
         r = cp.sqrt(x**2 + y**2).astype(CUPY_FLOAT)
-        print(r.max())
         x = cp.hstack([r.reshape(-1, 1), z.reshape(-1, 1)]).astype(CUPY_FLOAT)
         y = hyd.reshape(-1, 1).astype(CUPY_FLOAT)
         self._hyd_r_range = [0, r.max().get()]
@@ -138,7 +139,6 @@ class HydrationPotential:
             ),
             indexing="ij",
         )
-        print(r.max())
         num_r, num_z = r.shape
         index = x / cp.array([self._hyd_r_range[1], self._hyd_z_range[1]])
         index *= cp.array([num_r, num_z]) - 1
@@ -153,9 +153,28 @@ class HydrationPotential:
         self._assign_data[block_per_grid, thread_per_block](index, y, hyd, counts)
         hyd = hyd / counts
 
-        c = plt.contour(r.get(), z.get(), hyd.get(), 200)
-        plt.colorbar(c)
+        # dist = get_pore_distance_cylinder(r, z, self._r0, self._z0, self._rs)
+        # g_pore = HydrationDistributionFunction(json_file_path=pore_file_path)
+        # hyd = g_pore(dist)
+        # hyd = -(
+        #     cp.log(hyd)
+        #     * (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
+        # )
+        # c = plt.contour(r.get(), z.get(), hyd.get(), 200)
+        # plt.colorbar(c)
+        # plt.show()
+
+        x = cp.hstack([r.reshape([-1, 1]), z.reshape([-1, 1])])
+        y = hyd.reshape([-1, 1])
+        hyd_fun = self._train_net(x, y)
+
+        pred = hyd_fun(x)
+        c = plt.contour(
+            r.get(), z.get(), pred.detach().cpu().numpy().reshape(r.shape), 200
+        )
+        # plt.colorbar(c)
         plt.show()
+        return hyd_fun
 
         y = cp.hstack([r.reshape([-1, 1]), z.reshape([-1, 1])])
         d = hyd.reshape([-1, 1])
@@ -173,6 +192,39 @@ class HydrationPotential:
         if i != -1 and j != -1:
             cuda.atomic.add(target, (i, j), data[thread_id, 0])
             cuda.atomic.add(counts, (i, j), NUMBA_FLOAT(1))
+
+    def _train_net(self, x, y):
+        device = tc.device("cuda")
+        x = tc.tensor(x.get(), dtype=TORCH_FLOAT, device=device)
+        y = tc.tensor(y.get(), dtype=TORCH_FLOAT, device=device)
+        x_norm, x_std = x.mean(), x.std()
+        y_norm, y_std = y.mean(), y.std()
+        x = (x - x_norm) / x_std
+        y = (y - y_norm) / y_std
+        net = Net(2, [16, 64, 128, 256, 128, 64, 16], 1, device=device)
+        net.apply(weights_init)
+        optimizer = optim.Adam(net.parameters(), lr=5e-3)
+        for epoch in range(2000):
+            optimizer.zero_grad()
+            loss = ((net(x) - y) ** 2).mean()
+            loss.backward()
+            optimizer.step()
+            print(loss)
+        optimizer = optim.Adam(net.parameters(), lr=1e-3)
+        for epoch in range(2000):
+            optimizer.zero_grad()
+            loss = ((net(x) - y) ** 2).mean()
+            loss.backward()
+            optimizer.step()
+            print(loss)
+
+        def hyd_fun(x):
+            x = tc.tensor(x.get(), dtype=TORCH_FLOAT, device=device)
+            x = (x - x_norm) / x_std
+            y = net(x)
+            return y * y_std + y_norm
+
+        return hyd_fun
 
     def __call__(self, grid: Grid) -> cp.ndarray:
         r = grid.coordinate.r
