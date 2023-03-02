@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 """
-file : pnpe_newton_cylinder.py
-created time : 2023/02/23
+file : mpnpe_newton_cylinder.py
+created time : 2023/02/27
 author : Zhenyu Wei
 version : 1.0
 contact : zhenyuwei99@gmail.com
@@ -19,7 +19,7 @@ from model import *
 from model.core import Grid
 
 
-class PNPENewtonCylinderSolver:
+class MPNPENewtonCylinderSolver:
     def __init__(
         self,
         grid: Grid,
@@ -49,6 +49,9 @@ class PNPENewtonCylinderSolver:
         - epsilon: Relative permittivity
         - depsilon_dr: ∂epsilon/∂r
         - depsilon_dz: ∂epsilon/∂z
+        - du_dr_[ion]:
+        - du_dz_[ion]:
+        - curv_u_[ion]:
         - rho_fixed: Fixed charge density
 
         ### Constant:
@@ -72,6 +75,9 @@ class PNPENewtonCylinderSolver:
         self._grid.add_requirement("constant", "beta")
         for ion_type in self._ion_types:
             self._grid.add_requirement("variable", self._getattr_name("rho", ion_type))
+            self._grid.add_requirement("field", self._getattr_name("du_dr", ion_type))
+            self._grid.add_requirement("field", self._getattr_name("du_dz", ion_type))
+            self._grid.add_requirement("field", self._getattr_name("curv_u", ion_type))
             self._grid.add_requirement("constant", self._getattr_name("r", ion_type))
             self._grid.add_requirement("constant", self._getattr_name("z", ion_type))
             self._grid.add_requirement("constant", self._getattr_name("d", ion_type))
@@ -123,10 +129,12 @@ class PNPENewtonCylinderSolver:
         self._inv_2hr = grid.zeros_field(CUPY_FLOAT)
         self._epsilon_h2 = grid.zeros_field(CUPY_FLOAT)
         self._epsilon_2hr = grid.zeros_field(CUPY_FLOAT)
-        ## NPE attribute
         self._dphi_dr = grid.zeros_field(CUPY_FLOAT)
         self._dphi_dz = grid.zeros_field(CUPY_FLOAT)
         self._curv_phi = grid.zeros_field(CUPY_FLOAT)
+        # Attribute
+        self._npe_upwind_r_list = []
+        self._npe_upwind_z_list = []
 
     def _getattr_name(self, name: str, ion_type: str):
         return "%s_%s" % (name, ion_type)
@@ -173,6 +181,18 @@ class PNPENewtonCylinderSolver:
         self._pe_upwind_r[self._grid.field.depsilon_dr < 0] = CUPY_INT(-1)
         self._pe_upwind_z[self._grid.field.depsilon_dz > 0] = CUPY_INT(1)
         self._pe_upwind_z[self._grid.field.depsilon_dz < 0] = CUPY_INT(-1)
+        for ion_type in self._ion_types:
+            du_dr = getattr(self._grid.field, "du_dr_" + ion_type)
+            upwind_r = self._grid.zeros_field(CUPY_INT)
+            upwind_r[du_dr > 0] = CUPY_INT(-1)
+            upwind_r[du_dr < 0] = CUPY_INT(1)
+            self._npe_upwind_r_list.append(upwind_r)
+
+            du_dz = getattr(self._grid.field, "du_dz_" + ion_type)
+            upwind_z = self._grid.zeros_field(CUPY_INT)
+            upwind_z[du_dz > 0] = CUPY_INT(-1)
+            upwind_z[du_dz < 0] = CUPY_INT(1)
+            self._npe_upwind_z_list.append(upwind_z)
 
     def _get_pe_inner(self, index):
         data, row, col = [], [], []
@@ -405,10 +425,15 @@ class PNPENewtonCylinderSolver:
         data, row, col = [], [], []
         # Read data
         z = CUPY_FLOAT(getattr(self._grid.constant, "z_" + ion_type))
+        ion_index = self._ion_types.index(ion_type)
         rho = getattr(self._grid.variable, "rho_" + ion_type).value
-        phi = self._grid.variable.phi.value
+        du_dr = getattr(self._grid.field, "du_dr_" + ion_type)
+        du_dz = getattr(self._grid.field, "du_dz_" + ion_type)
+        curv_u = getattr(self._grid.field, "curv_u_" + ion_type)
         # Constant
-        alpha = CUPY_FLOAT(z * self._grid.constant.beta)
+        beta = CUPY_FLOAT(self._grid.constant.beta)
+        beta_h = CUPY_FLOAT(beta * self._inv_h)
+        alpha = CUPY_FLOAT(z * beta)
         alpha_h = CUPY_FLOAT(alpha * self._inv_h)
         alpha_h2 = CUPY_FLOAT(alpha * self._inv_h2)
         row_offset = self._get_offset(ion_type)
@@ -422,57 +447,77 @@ class PNPENewtonCylinderSolver:
         upwind_z = CUPY_FLOAT(z / np.abs(z))
         conv_term_r = upwind_r * self._dphi_dr[self_index] * alpha_h
         conv_term_z = upwind_z * self._dphi_dz[self_index] * alpha_h
+
+        u_upwind_r = self._npe_upwind_r_list[ion_index][self_index]
+        u_upwind_z = self._npe_upwind_z_list[ion_index][self_index]
+        u_conv_term_r = u_upwind_r * du_dr[self_index] * beta_h
+        u_conv_term_z = u_upwind_z * du_dz[self_index] * beta_h
         # Index
-        r_upwind_plus = (index[:, 0] + CUPY_INT(upwind_r), index[:, 1])
-        z_upwind_plus = (index[:, 0], index[:, 1] + CUPY_INT(upwind_z))
+        phi_r_upwind_plus = (index[:, 0] + CUPY_INT(upwind_r), index[:, 1])
+        phi_z_upwind_plus = (index[:, 0], index[:, 1] + CUPY_INT(upwind_z))
+        u_r_upwind_plus = (index[:, 0] + u_upwind_r.astype(CUPY_INT), index[:, 1])
+        u_z_upwind_plus = (index[:, 0], index[:, 1] + u_upwind_z.astype(CUPY_INT))
         r_plus, r_minus = (index[:, 0] + 1, index[:, 1]), (index[:, 0] - 1, index[:, 1])
         z_plus, z_minus = (index[:, 0], index[:, 1] + 1), (index[:, 0], index[:, 1] - 1)
         # c r+1
+        plus_index = u_upwind_r > 0
         factor = self._inv_h2 + self._inv_2hr[self_index] + conv_term_r
+        factor[plus_index] += u_conv_term_r[plus_index]
         data.append(factor)
         col.append(row_index + z_shape)
         # c r-1
         factor = self._inv_h2 - self._inv_2hr[self_index]
+        factor[~plus_index] += u_conv_term_r[~plus_index]
         data.append(factor)
         col.append(row_index - z_shape)
         # c z+1
+        plus_index = u_upwind_z > 0
         factor = self._inv_h2 + cp.zeros(index.shape[0], CUPY_FLOAT)
+        factor[plus_index] += u_conv_term_z[plus_index]
         if upwind_z == 1:
             factor += conv_term_z
         data.append(factor)
         col.append(row_index + 1)
         # c z-1
         factor = self._inv_h2 + cp.zeros(index.shape[0], CUPY_FLOAT)
+        factor[~plus_index] += u_conv_term_z[~plus_index]
         if upwind_z != 1:
             factor += conv_term_z
         data.append(factor)
         col.append(row_index - 1)
         # c
-        factor = -conv_term_r - conv_term_z
+        factor = -conv_term_r - conv_term_z - u_conv_term_r - u_conv_term_z
         factor -= self._inv_h2 * CUPY_FLOAT(4)
         factor += alpha * self._curv_phi[self_index]
+        factor += beta * curv_u[self_index]
         data.append(factor)
         col.append(row_index)
         # phi
         phi_row_index = row_index - row_offset
         c_h2 = self._inv_h2 * rho[self_index]
         c_2hr = self._inv_2hr[self_index] * rho[self_index]
-        dc_dr_h = self._inv_h2 * upwind_r * (rho[r_upwind_plus] - rho[self_index])
-        dc_dz_h = self._inv_h2 * upwind_z * (rho[z_upwind_plus] - rho[self_index])
+        phi_dc_dr_h = (
+            self._inv_h2 * upwind_r * (rho[phi_r_upwind_plus] - rho[self_index])
+        )
+        phi_dc_dz_h = (
+            self._inv_h2 * upwind_z * (rho[phi_z_upwind_plus] - rho[self_index])
+        )
+        u_dc_dr = self._inv_h * u_upwind_r * (rho[u_r_upwind_plus] - rho[self_index])
+        u_dc_dz = self._inv_h * u_upwind_z * (rho[u_z_upwind_plus] - rho[self_index])
         # phi r+1
-        factor = (c_h2 + c_2hr + dc_dr_h * CUPY_FLOAT(0.5)) * alpha
+        factor = (c_h2 + c_2hr + phi_dc_dr_h * CUPY_FLOAT(0.5)) * alpha
         data.append(factor)
         col.append(phi_row_index + z_shape)
         # phi r-1
-        factor = (c_h2 - c_2hr - dc_dr_h * CUPY_FLOAT(0.5)) * alpha
+        factor = (c_h2 - c_2hr - phi_dc_dr_h * CUPY_FLOAT(0.5)) * alpha
         data.append(factor)
         col.append(phi_row_index - z_shape)
         # phi z+1
-        factor = (c_h2 + dc_dz_h * CUPY_FLOAT(0.5)) * alpha
+        factor = (c_h2 + phi_dc_dz_h * CUPY_FLOAT(0.5)) * alpha
         data.append(factor)
         col.append(phi_row_index + 1)
         # phi z-1
-        factor = (c_h2 - dc_dz_h * CUPY_FLOAT(0.5)) * alpha
+        factor = (c_h2 - phi_dc_dz_h * CUPY_FLOAT(0.5)) * alpha
         data.append(factor)
         col.append(phi_row_index - 1)
         # phi
@@ -487,9 +532,13 @@ class PNPENewtonCylinderSolver:
             + rho[self_index] * CUPY_FLOAT(-4)
         )
         pred += self._inv_2hr[self_index] * (rho[r_plus] - rho[r_minus])
-        pred += dc_dr_h * self._dphi_dr[self_index] * (alpha * self._h)
-        pred += dc_dz_h * self._dphi_dz[self_index] * (alpha * self._h)
+        pred += phi_dc_dr_h * self._dphi_dr[self_index] * (alpha * self._h)
+        pred += phi_dc_dz_h * self._dphi_dz[self_index] * (alpha * self._h)
         pred += alpha * rho[self_index] * self._curv_phi[self_index]
+
+        pred += u_dc_dr * du_dr[self_index] * beta
+        pred += u_dc_dz * du_dz[self_index] * beta
+        pred += beta * rho[self_index] * curv_u[self_index]
 
         # Vector
         vector = cp.zeros(self._num_variables, CUPY_FLOAT)
@@ -522,10 +571,16 @@ class PNPENewtonCylinderSolver:
         data, row, col = [], [], []
         # Read data
         z = CUPY_FLOAT(getattr(self._grid.constant, "z_" + ion_type))
+        ion_index = self._ion_types.index(ion_type)
         rho = getattr(self._grid.variable, "rho_" + ion_type).value
+        du_dz = getattr(self._grid.field, "du_dz_" + ion_type)
+        curv_u = getattr(self._grid.field, "curv_u_" + ion_type)
         # Constant
-        alpha = CUPY_FLOAT(z * self._grid.constant.beta)
+        beta = CUPY_FLOAT(self._grid.constant.beta)
+        beta_h = CUPY_FLOAT(beta * self._inv_h)
+        alpha = CUPY_FLOAT(z * beta)
         alpha_h = CUPY_FLOAT(alpha * self._inv_h)
+        alpha_h2 = CUPY_FLOAT(alpha * self._inv_h2)
         row_offset = self._get_offset(ion_type)
         z_shape = CUPY_INT(self._grid.shape[1])
         row_index = (index[:, 0] * z_shape + index[:, 1] + row_offset).astype(CUPY_INT)
@@ -535,8 +590,11 @@ class PNPENewtonCylinderSolver:
         self_index = (index[:, 0], index[:, 1])
         upwind_z = CUPY_FLOAT(z / np.abs(z))
         conv_term_z = upwind_z * self._dphi_dz[self_index] * alpha_h
+        u_upwind_z = self._npe_upwind_z_list[ion_index][self_index]
+        u_conv_term_z = u_upwind_z * du_dz[self_index] * beta_h
         # Index
         z_upwind_plus = (index[:, 0], index[:, 1] + CUPY_INT(upwind_z))
+        u_z_upwind_plus = (index[:, 0], index[:, 1] + u_upwind_z.astype(CUPY_INT))
         r_plus, r_plus2 = (index[:, 0] + 1, index[:, 1]), (index[:, 0] + 2, index[:, 1])
         z_plus, z_minus = (index[:, 0], index[:, 1] + 1), (index[:, 0], index[:, 1] - 1)
         # c r+1
@@ -549,19 +607,22 @@ class PNPENewtonCylinderSolver:
         data.append(factor)
         col.append(row_index + CUPY_INT(2 * z_shape))
         # c z+1
+        plus_index = u_upwind_z > 0
         factor = self._inv_h2 + zeros
+        factor[plus_index] += u_conv_term_z[plus_index]
         if upwind_z == 1:
             factor += conv_term_z
         data.append(factor)
         col.append(row_index + 1)
         # c z-1
         factor = self._inv_h2 + zeros
+        factor[~plus_index] += u_conv_term_z[~plus_index]
         if upwind_z != 1:
             factor += conv_term_z
         data.append(factor)
         col.append(row_index - 1)
         # c
-        factor = -conv_term_z - self._inv_h2 * CUPY_FLOAT(9)
+        factor = -conv_term_z - u_conv_term_z - self._inv_h2 * CUPY_FLOAT(9)
         factor += alpha * self._curv_phi[self_index]
         data.append(factor)
         col.append(row_index)
@@ -569,6 +630,7 @@ class PNPENewtonCylinderSolver:
         phi_row_index = row_index - row_offset
         c_h2 = self._inv_h2 * rho[self_index]
         dc_dz_h = self._inv_h2 * upwind_z * (rho[z_upwind_plus] - rho[self_index])
+        u_dc_dz_h = self._inv_h2 * u_upwind_z * (rho[u_z_upwind_plus] - rho[self_index])
         # phi r+1
         factor = c_h2 * (alpha * CUPY_FLOAT(8))
         data.append(factor)
@@ -597,7 +659,9 @@ class PNPENewtonCylinderSolver:
             + rho[self_index] * CUPY_FLOAT(-9)
         )
         pred += dc_dz_h * self._dphi_dz[self_index] * (alpha * self._h)
+        pred += u_dc_dz_h * du_dz[self_index] * (beta * self._h)
         pred += alpha * rho[self_index] * self._curv_phi[self_index]
+        pred += beta * rho[self_index] * curv_u[self_index]
         # Vector
         vector = cp.zeros(self._num_variables, CUPY_FLOAT)
         vector[row_index] -= pred
@@ -659,7 +723,7 @@ class PNPENewtonCylinderSolver:
         inv_h2 = cp.ones(index.shape[0], CUPY_FLOAT) + self._inv_h2
         data.append(inv_h2 * CUPY_FLOAT(4))
         col.append(row_index + direction)
-        # a+2
+        # z+2
         data.append(inv_h2 * CUPY_FLOAT(-1))
         col.append(row_index + direction + direction)
         # self

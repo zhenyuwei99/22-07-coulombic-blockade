@@ -11,3 +11,6 @@ NPE_CYLINDER_GRID_FILE_PATH = os.path.join(CUR_DIR, "./data/npe_cylinder.grid")
 PNPE_NEWTON_CYLINDER_GRID_FILE_PATH = os.path.join(
     CUR_DIR, "./out/pnpe_newton_cylinder.grid"
 )
+MPNPE_NEWTON_CYLINDER_GRID_FILE_PATH = os.path.join(
+    CUR_DIR, "./out/mpnpe_newton_cylinder.grid"
+)

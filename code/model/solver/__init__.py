@@ -17,6 +17,7 @@ from model.solver.pnpe_cylinder import PNPECylinderSolver
 from model.solver.pnpe_newton_cylinder import PNPENewtonCylinderSolver
 
 from model.solver.mpnpe_cylinder import MPNPECylinderSolver
+from model.solver.mpnpe_newton_cylinder import MPNPENewtonCylinderSolver
 
 
 __all__ = [
