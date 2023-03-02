@@ -11,6 +11,7 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 
 import torch as tc
 import torch.nn as nn
+from model import *
 
 
 class Net(nn.Module):
@@ -26,23 +27,29 @@ class Net(nn.Module):
         self._hidden_dim_list = hidden_dim_list
         self._num_hidden_layers = len(hidden_dim_list)
         self._output_dim = output_dim
-        self._module_list = nn.ModuleList(self._get_layer_list())
-        self.to(device)
+        self._device = device
+        self._module_list = nn.ModuleList(self._get_layer_list()).to(self._device)
+        self.to(self._device)
 
     def _get_layer_list(self):
         activate = nn.Sigmoid
         layer_list = []
-        layer_list.append(nn.Linear(self._input_dim, self._hidden_dim_list[0]))
+        layer_list.append(
+            nn.Linear(self._input_dim, self._hidden_dim_list[0], dtype=TORCH_FLOAT)
+        )
         layer_list.append(activate())
         for index in range(self._num_hidden_layers - 1):
             layer_list.append(
                 nn.Linear(
                     self._hidden_dim_list[index],
                     self._hidden_dim_list[index + 1],
+                    dtype=TORCH_FLOAT,
                 )
             )
             layer_list.append(activate())
-        layer_list.append(nn.Linear(self._hidden_dim_list[-1], self._output_dim))
+        layer_list.append(
+            nn.Linear(self._hidden_dim_list[-1], self._output_dim, dtype=TORCH_FLOAT)
+        )
         return layer_list
 
     def forward(self, x: tc.Tensor):
@@ -50,3 +57,7 @@ class Net(nn.Module):
         for module in self._module_list:
             y = module(y)
         return y
+
+    @property
+    def device(self):
+        return self._device
