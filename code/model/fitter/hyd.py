@@ -57,7 +57,7 @@ class HydrationPotentialFitter:
         y = tc.tensor(energy_mean.reshape(-1, 1).get(), device=device) * convert
         optimizer = optim.Adam(net.parameters(), lr=1e-2)
         threshold = 0.0001
-        for epoch in range(10000):
+        for epoch in range(100000):
             optimizer.zero_grad()
             loss = ((net(x) - y) ** 2).mean()
             loss.backward()
@@ -116,7 +116,7 @@ if __name__ == "__main__":
     import time
     import matplotlib.pyplot as plt
 
-    ion_type = "cla"
+    ion_type = "pot"
     temperature = Quantity(300, kelvin)
     convert = Quantity(1, default_energy_unit) / temperature / KB
     convert = convert.value
@@ -130,6 +130,7 @@ if __name__ == "__main__":
     else:
         s = time.time()
         net = torch.load(net_file_path)
+        print(net.device)
         e = time.time()
         print("Run loading network for %s s" % (e - s))
 
