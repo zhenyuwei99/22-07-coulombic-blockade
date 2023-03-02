@@ -12,3 +12,5 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 from potential.hdf import HydrationDistributionFunction
 from potential.hyd import HydrationPotential
 from potential.vdw import VDWPotential
+
+from potential.hyd_cylinder import HydrationPotentialCylinder
