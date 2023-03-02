@@ -502,8 +502,8 @@ class MPNPENewtonCylinderSolver:
         phi_dc_dz_h = (
             self._inv_h2 * upwind_z * (rho[phi_z_upwind_plus] - rho[self_index])
         )
-        u_dc_dr_h = self._inv_h2 * u_upwind_r * (rho[u_r_upwind_plus] - rho[self_index])
-        u_dc_dz_h = self._inv_h2 * u_upwind_z * (rho[u_z_upwind_plus] - rho[self_index])
+        u_dc_dr = self._inv_h * u_upwind_r * (rho[u_r_upwind_plus] - rho[self_index])
+        u_dc_dz = self._inv_h * u_upwind_z * (rho[u_z_upwind_plus] - rho[self_index])
         # phi r+1
         factor = (c_h2 + c_2hr + phi_dc_dr_h * CUPY_FLOAT(0.5)) * alpha
         data.append(factor)
@@ -536,8 +536,8 @@ class MPNPENewtonCylinderSolver:
         pred += phi_dc_dz_h * self._dphi_dz[self_index] * (alpha * self._h)
         pred += alpha * rho[self_index] * self._curv_phi[self_index]
 
-        pred += u_dc_dr_h * du_dr[self_index] * (beta * self._h)
-        pred += u_dc_dz_h * du_dz[self_index] * (beta * self._h)
+        pred += u_dc_dr * du_dr[self_index] * beta
+        pred += u_dc_dz * du_dz[self_index] * beta
         pred += beta * rho[self_index] * curv_u[self_index]
 
         # Vector
@@ -766,12 +766,13 @@ class MPNPENewtonCylinderSolver:
         self._update_constant_factor()
         for iteration in range(num_iterations):
             self._matrix, self._vector = self._get_equation()
-            res = spl.gmres(
-                self._matrix,
-                self._vector,
-                maxiter=num_jacobian_iterations,
-                restart=solver_freq,
-            )[0]
+            # res = spl.gmres(
+            #     self._matrix,
+            #     self._vector,
+            #     maxiter=num_jacobian_iterations,
+            #     restart=solver_freq,
+            # )[0]
+            res = spl.spsolve(self._matrix, self._vector)
             residual = self._matrix.dot(res) - self._vector
             residual = cp.abs(residual).mean()
             self._assign_res(res)

@@ -15,7 +15,6 @@ import cupyx.scipy.sparse as sp
 import cupyx.scipy.sparse.linalg as spl
 from mdpy.utils import check_quantity, check_quantity_value
 from mdpy.unit import *
-
 from model import *
 from model.core import Grid
 
@@ -128,8 +127,6 @@ class PNPENewtonCylinderSolver:
         self._dphi_dr = grid.zeros_field(CUPY_FLOAT)
         self._dphi_dz = grid.zeros_field(CUPY_FLOAT)
         self._curv_phi = grid.zeros_field(CUPY_FLOAT)
-        self._npe_upwind_r = grid.zeros_field(CUPY_FLOAT)
-        self._npe_upwind_z = grid.zeros_field(CUPY_FLOAT)
 
     def _getattr_name(self, name: str, ion_type: str):
         return "%s_%s" % (name, ion_type)
@@ -526,11 +523,9 @@ class PNPENewtonCylinderSolver:
         # Read data
         z = CUPY_FLOAT(getattr(self._grid.constant, "z_" + ion_type))
         rho = getattr(self._grid.variable, "rho_" + ion_type).value
-        phi = self._grid.variable.phi.value
         # Constant
         alpha = CUPY_FLOAT(z * self._grid.constant.beta)
         alpha_h = CUPY_FLOAT(alpha * self._inv_h)
-        alpha_h2 = CUPY_FLOAT(alpha * self._inv_h2)
         row_offset = self._get_offset(ion_type)
         z_shape = CUPY_INT(self._grid.shape[1])
         row_index = (index[:, 0] * z_shape + index[:, 1] + row_offset).astype(CUPY_INT)
@@ -702,17 +697,18 @@ class PNPENewtonCylinderSolver:
             )
             # rho.value[rho.value <= 0] = 0
 
-    def iterate(self, num_iterations, num_jacobian_iterations=5000, solver_freq=250):
+    def iterate(self, num_iterations, num_jacobian_iterations=5000, solver_freq=500):
         self._grid.check_requirement()
         self._update_constant_factor()
         for iteration in range(num_iterations):
             self._matrix, self._vector = self._get_equation()
-            res = spl.gmres(
-                self._matrix,
-                self._vector,
-                maxiter=num_jacobian_iterations,
-                restart=solver_freq,
-            )[0]
+            # res = spl.gmres(
+            #     self._matrix,
+            #     self._vector,
+            #     maxiter=num_jacobian_iterations,
+            #     restart=solver_freq,
+            # )[0]
+            res = spl.spsolve(self._matrix, self._vector)
             residual = self._matrix.dot(res) - self._vector
             residual = cp.abs(residual).mean()
             self._assign_res(res)
