@@ -100,10 +100,7 @@ class WaterRDFAnalyzer:
             "rdf": "The mean value of RDF function, unit: dimesionless",
             "r": "The bin center of RDF function, unit: default_length_unit",
         }
-        data = {
-            "rdf": hist.get(),
-            "r": r.get(),
-        }
+        data = {"rdf": hist.get(), "r": r.get()}
         return AnalyserResult(title=title, description=description, data=data)
 
 
