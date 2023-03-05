@@ -16,4 +16,4 @@ from potential.hyd import HydrationPotential
 from potential.vdw import VDWPotential
 
 from potential.hyd_cylinder import HydrationPotentialCylinder
-from potential.hyd_cylinder_net import HydrationDistributionFunctionNet
+from potential.hyd_cylinder_net import HydrationPotentialCylinderNet
