@@ -142,7 +142,7 @@ if __name__ == "__main__":
     r0_list = [i * cc_bond_length * 3 / (2 * np.pi) for i in [8]]
 
     for r0 in r0_list:
-        hyd = HydrationPotentialCylinderNet(r0=r0, ion_type="k")
+        hyd = HydrationPotentialCylinderNet(r0=r0, ion_type="na")
         r, hyd = hyd.evaluate()
         r, hyd = r.get(), hyd.get()
         hyd *= (Quantity(1, default_energy_unit) / Quantity(300, kelvin) / KB).value

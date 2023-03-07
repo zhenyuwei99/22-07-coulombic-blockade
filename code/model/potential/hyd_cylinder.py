@@ -16,7 +16,7 @@ import cupyx.scipy.signal as signal
 from mdpy.utils import check_quantity, check_quantity_value
 from mdpy.unit import *
 from model import *
-from model.potential import HydrationDistributionFunction
+from model.potential.hdf import HydrationDistributionFunction
 
 
 HDF_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/hdf")
@@ -40,6 +40,7 @@ class HydrationPotentialCylinder:
         self._temperature = check_quantity_value(temperature, kelvin)
         self._hdf_dir = hdf_dir
         # Attribute
+        self._ion_name = ION_DICT[self._ion_type]["name"]
         self._kbt = CUPY_FLOAT(
             (Quantity(self._temperature, kelvin) * KB)
             .convert_to(default_energy_unit)
@@ -50,6 +51,8 @@ class HydrationPotentialCylinder:
             .convert_to(1 / default_length_unit**3)
             .value
         )
+        z = ION_DICT[self._ion_type]["val"].value
+        self._target = ["oxygen"] if z < 0 else ["hydrogen"]
         self._target = ["oxygen", "hydrogen"]
         self._r_range = [0, self._r0]
         self._r_extend_range = [0, self._r0 + self._r_cut]
@@ -82,7 +85,7 @@ class HydrationPotentialCylinder:
             factor = CUPY_FLOAT(self._h**3 * n0)
             pore_file_path = os.path.join(self._hdf_dir, "%s-pore.json" % target)
             ion_file_path = os.path.join(
-                self._hdf_dir, "%s-%s.json" % (target, self._ion_type)
+                self._hdf_dir, "%s-%s.json" % (target, self._ion_name)
             )
             g_pore = HydrationDistributionFunction(json_file_path=pore_file_path)
             g_ion = HydrationDistributionFunction(json_file_path=ion_file_path)
@@ -100,7 +103,6 @@ class HydrationPotentialCylinder:
         ).reshape(-1)
         index = cp.round(index).astype(CUPY_INT)
         index[index >= num_bins] = -1
-        print(index)
         data = hyd.reshape(-1).astype(CUPY_FLOAT)
         target = cp.zeros_like(r, CUPY_FLOAT)
         counts = cp.zeros_like(r, CUPY_INT)
