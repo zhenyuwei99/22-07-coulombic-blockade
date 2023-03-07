@@ -29,7 +29,7 @@ class HDFNetFitter:
         index = int(tc.argwhere(r < 3.5)[:, 0].max().detach().cpu().numpy())
         optimizer = optim.Adam(net.parameters(), lr=5e-3)
         threshold = 1e-4
-        for epoch in range(20000):
+        for epoch in range(50000):
             optimizer.zero_grad()
             pred = net(r)
             loss = ((pred - rdf) ** 2).mean()
@@ -47,7 +47,7 @@ class HDFNetFitter:
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    target = "cla"
+    target = "sod"
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(cur_dir, "../data/hdf")
     img_file_path = os.path.join(os.path.join(cur_dir, "../out/fitter/fitting_ion.png"))
@@ -63,8 +63,11 @@ if __name__ == "__main__":
     r = result.data["r"]
     rdf = result.data["rdf"]
 
-    fitter = HDFNetFitter()
-    net = fitter.fit(r, rdf)
+    if not True:
+        fitter = HDFNetFitter()
+        net = fitter.fit(r, rdf)
+    else:
+        net = tc.load(net_file_path)
 
     r_new = np.arange(0, 25, 0.1)
     pred = net(tc.tensor(r_new, device=net.device, dtype=TORCH_FLOAT).reshape(-1, 1))
