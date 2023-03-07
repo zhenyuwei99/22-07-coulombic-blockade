@@ -195,32 +195,81 @@ if __name__ == "__main__":
     for ion_type, density in zip(ion_types, density_list):
         grid.add_variable("rho_" + ion_type, get_rho(grid, ion_type, density, dist))
 
-    if True:
+    if not True:
         solver.iterate(7)
         writer = GridWriter(PNPE_NEWTON_CYLINDER_GRID_FILE_PATH)
         writer.write(grid)
         visualize_concentration(grid, ion_types, is_save=False)
     else:
         grid = GridParser(PNPE_NEWTON_CYLINDER_GRID_FILE_PATH).grid
-        flux = get_z_flux(grid, "k", grid.variable.phi.value)
-        flux -= get_z_flux(grid, "cl", -grid.variable.phi.value)
-        factor = CUPY_FLOAT(2 * cp.pi * grid.grid_width) * grid.coordinate.r[1:-1, 1:-1]
-        convert = (
-            Quantity(1, elementary_charge / default_time_unit).convert_to(ampere).value
-        )
-        current = (factor * flux).sum(0) * convert
 
-        # c = plt.contour(
-        #     grid.coordinate.r[1:-1, 1:-1].get(),
-        #     grid.coordinate.z[1:-1, 1:-1].get(),
-        #     flux.get(),
-        # )
-        # plt.colorbar(c)
+        case = 4
+        if case == 1:
+            flux = get_z_flux(grid, "k", grid.variable.phi.value)
+            flux -= get_z_flux(grid, "cl", -grid.variable.phi.value)
+            factor = (
+                CUPY_FLOAT(2 * cp.pi * grid.grid_width) * grid.coordinate.r[1:-1, 1:-1]
+            )
+            convert = (
+                Quantity(1, elementary_charge / default_time_unit)
+                .convert_to(ampere)
+                .value
+            )
+            current = (factor * flux).sum(0) * convert
+            z = grid.coordinate.z[0, 1:-1]
+            target = grid.variable.rho_k.value[0, 1:-1]
+            index = cp.abs(z) < 15
+            plt.plot(z[index].get(), current[index].get())
 
-        z = grid.coordinate.z[0, 1:-1]
-        target = grid.variable.rho_k.value[0, 1:-1]
-        index = cp.abs(z) < 15
-        plt.plot(z[index].get(), current[index].get())
+        elif case == 2:
+            flux = get_z_flux(grid, "k", grid.variable.phi.value)
+            flux -= get_z_flux(grid, "cl", -grid.variable.phi.value)
+            factor = (
+                CUPY_FLOAT(2 * cp.pi * grid.grid_width) * grid.coordinate.r[1:-1, 1:-1]
+            )
+            convert = (
+                Quantity(1, elementary_charge / default_time_unit)
+                .convert_to(ampere)
+                .value
+            )
+            c = plt.contour(
+                grid.coordinate.r[1:-1, 1:-1].get(),
+                grid.coordinate.z[1:-1, 1:-1].get(),
+                flux.get(),
+            )
+            plt.colorbar(c)
+        elif case == 3:
+            r = grid.coordinate.r.get()
+            z = grid.coordinate.z.get()
+            phi = grid.variable.phi.value.get()
+            # phi = grid.variable.rho_cl.value.get()
 
-        visualize_concentration(grid, ion_types, is_save=False)
+            index = np.argwhere(r < 20)
+            r_min, r_max = index[:, 0].min(), index[:, 0].max()
+            index = np.argwhere(np.abs(z) < 20)
+            z_min, z_max = index[:, 1].min(), index[:, 1].max()
+
+            target_slice = (slice(r_min, r_max), slice(z_min, z_max))
+            plt.contour(r[target_slice], z[target_slice], phi[target_slice], 50)
+        elif case == 4:
+            convert = Quantity(1, default_energy_unit) / Quantity(300, kelvin) / KB
+            convert = (
+                Quantity(1, 1 / default_length_unit**3)
+                / NA
+                / (Quantity(1, mol / decimeter**3))
+            )
+            r = grid.coordinate.r.get()
+            # phi = grid.variable.phi.value.get() * convert.value
+            # phi = np.exp(-phi)
+            phi = grid.variable.rho_cl.value.get() * convert.value
+
+            z_index = grid.shape[1] // 2
+
+            index = np.argwhere(r < 20)
+            r_min, r_max = index[:, 0].min(), index[:, 0].max()
+
+            target_slice = (slice(r_min, r_max), z_index)
+            plt.plot(r[target_slice], phi[target_slice])
+
+        # visualize_concentration(grid, ion_types, is_save=False)
     plt.show()

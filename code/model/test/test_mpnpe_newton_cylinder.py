@@ -55,7 +55,7 @@ def get_epsilon(grid: Grid, r0, z0, rs):
     epsilon = 1.0 / (1.0 + tc.exp(-alpha * dist))
     epsilon *= 78.0
     epsilon += 2.0
-    if not True:
+    if True:
         depsilon_dx = grad(epsilon.sum(), x)[0].cpu().numpy()
         depsilon_dx[np.isnan(depsilon_dx)] = 0
         epsilon = epsilon.detach().cpu().numpy().reshape(grid.shape)
@@ -265,9 +265,9 @@ if __name__ == "__main__":
     r0, z0, rs = 13.541, 25, 5
     ion_types = ["k", "cl"]
     density_list = [0.15, 0.15]
-    voltage = Quantity(10.0, volt)
+    voltage = Quantity(5.0, volt)
     density = Quantity(0.15, mol / decimeter**3)
-    grid = Grid(grid_width=0.5, r=[0, 75], z=[-100, 100])
+    grid = Grid(grid_width=0.5, r=[0, 50], z=[-100, 100])
     dist = get_pore_distance_cylinder(grid.coordinate.r, grid.coordinate.z, r0, z0, rs)
     epsilon, depsilon_dr, depsilon_dz = get_epsilon(grid, r0, z0, rs)
     solver = MPNPENewtonCylinderSolver(grid=grid, ion_types=ion_types)
@@ -285,7 +285,7 @@ if __name__ == "__main__":
         grid.add_field("du_dr_" + ion_type, du_dr)
         grid.add_field("du_dz_" + ion_type, du_dz)
         grid.add_field("curv_u_" + ion_type, curv_u)
-    if not True:
+    if True:
         solver.iterate(10)
         writer = GridWriter(MPNPE_NEWTON_CYLINDER_GRID_FILE_PATH)
         writer.write(grid)
