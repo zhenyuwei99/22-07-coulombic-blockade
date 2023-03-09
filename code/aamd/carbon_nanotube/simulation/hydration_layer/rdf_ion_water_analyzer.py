@@ -77,6 +77,7 @@ class WaterRDFAnalyzer:
         num_frames = self._ion_positions.shape[0]
         num_ions = self._ion_positions.shape[1]
         factor *= num_ions * num_frames
+        print(num_frames, num_ions)
         print(factor)
         dist = []
         for i in range(num_ions):
@@ -87,7 +88,7 @@ class WaterRDFAnalyzer:
             dist.append(cp.sqrt((dist_vec**2).sum(2)).reshape(-1))
 
         dist = cp.hstack(dist).astype(CUPY_FLOAT)
-        hist, bin_edges = cp.histogram(dist, bins=250, range=(0.0, 12.0))
+        hist, bin_edges = cp.histogram(dist, bins=450, range=(0.0, 12.0))
         dr = CUPY_FLOAT((bin_edges[1] - bin_edges[0]).get())
         r = bin_edges[:-1] + CUPY_FLOAT(dr * 0.5)
         hist = hist / (CUPY_FLOAT(4 * cp.pi * dr * factor) * r**2)
@@ -108,10 +109,10 @@ if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(cur_dir, "out/analysis_out")
 
-    ion_type = "pot"
+    ion_type = "sod"
     res_file_path = os.path.join(out_dir, "rdf-%s-water.npz" % ion_type)
-    psf_file_path = "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/no-wall-charge/no-pore-w0-2.000A-ls-25.000A-POT-1.00e-01molPerL/pot-x-0.00A-y-0.00A-z-0.00A/str/no-pore-w0-50.000A-ls-25.000A-pot-1.00e-01molPerL-no-wall-charge.psf"
-    dcd_file_path = "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/no-wall-charge/no-pore-w0-2.000A-ls-25.000A-POT-1.00e-01molPerL/pot-x-0.00A-y-0.00A-z-0.00A/04-sample/04-sample.dcd"
+    psf_file_path = "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/no-wall-charge-long-time/no-pore-w0-2.000A-ls-25.000A-SOD-1.00e-01molPerL-1/str/no-pore-w0-50.000A-ls-25.000A-sod-1.00e-01molPerL-no-wall-charge.psf"
+    dcd_file_path = "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/no-wall-charge-long-time/no-pore-w0-2.000A-ls-25.000A-SOD-1.00e-01molPerL-1/04-sample/04-sample.dcd"
     analyzer = WaterRDFAnalyzer(
         ion_type=ion_type, dcd_file_path=dcd_file_path, psf_file_path=psf_file_path
     )

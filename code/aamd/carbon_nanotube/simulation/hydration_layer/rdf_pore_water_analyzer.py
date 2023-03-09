@@ -100,7 +100,7 @@ class WaterPoreRDFAnalyzer:
         y = self._water_positions[index, 1]
         r = cp.sqrt((x - self._center[0]) ** 2 + (y - self._center[1]) ** 2)
 
-        hist, bin_edges = cp.histogram(r, bins=450, range=(30, self._r))
+        hist, bin_edges = cp.histogram(r, bins=450, range=(0, self._r))
         dr = CUPY_FLOAT((bin_edges[1] - bin_edges[0]).get())
         r = bin_edges[:-1] + CUPY_FLOAT(dr * 0.5)
         hist = hist / (CUPY_FLOAT(2 * cp.pi * dr * self._l * factor) * r)
@@ -129,11 +129,44 @@ if __name__ == "__main__":
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(cur_dir, "out/analysis_out")
 
-    res_file_path = os.path.join(out_dir, "rdf-pore-water.npz")
-    psf_file_path = "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/wall_distribution/str/r0-50.101A-l0-50.000A-no-ion.psf"
-    dcd_file_path = "//home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/wall_distribution/out/04-sample-nvt/04-sample-nvt.dcd"
-    analyzer = WaterPoreRDFAnalyzer(
-        dcd_file_path=dcd_file_path, psf_file_path=psf_file_path
-    )
-    res = analyzer.analysis()
-    res.save(res_file_path)
+    r0 = 5.416
+    res_file_path = os.path.join(out_dir, "rdf-pore-%.3fA-water.npz" % r0)
+    if True:
+        psf_file_path = (
+            "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/wall_distribution/str/r0-%.3fA-l0-100.000A-no-ion.psf"
+            % r0
+        )
+        dcd_file_path = (
+            "/home/zhenyuwei/Documents/22-07-coulombic-blockade/code/aamd/carbon_nanotube/simulation/hydration_layer/out/wall_distribution/out/r0-%.3fA/04-sample-nvt/04-sample-nvt.dcd"
+            % r0
+        )
+        analyzer = WaterPoreRDFAnalyzer(
+            dcd_file_path=dcd_file_path, psf_file_path=psf_file_path
+        )
+        res = analyzer.analysis()
+        res.save(res_file_path)
+    else:
+        from scipy.interpolate import interp1d
+
+        res_file_path = os.path.join(out_dir, "rdf-pore-water.npz")
+        res = md.analyser.load_analyser_result(res_file_path)
+        r = res.data["r"]
+        rdf = res.data["rdf"]
+        fun = interp1d(r, rdf)
+        r_min = r.min()
+
+        # r = r[: np.argwhere(r < r0)[-1, 0]]
+        # plt.plot(r, fun(r) * fun(2 * r0 - r), ".-")
+        # plt.plot(r, fun(r), ".-")
+        # plt.plot(r, rdf, ".-")
+
+        res_file_path = os.path.join(out_dir, "rdf-pore-%.3fA-water.npz" % r0)
+        res = md.analyser.load_analyser_result(res_file_path)
+        r = res.data["r"]
+        rdf = res.data["rdf"]
+        plt.plot(r, rdf, ".-")
+
+        r[r <= r_min] = r_min
+        plt.plot(r, fun(r) * fun(r + r0), ".-")
+        plt.plot(r, fun(r) * fun(2 * r0 - r), ".-")
+        plt.show()
