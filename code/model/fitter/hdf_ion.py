@@ -13,15 +13,16 @@ import os
 import numpy as np
 import mdpy as md
 from scipy import optimize
-from model.energy import HydrationDistributionFunction
+from model.potential import HydrationDistributionFunction
 
-ion, target = "sod", "hydrogen"
+ion, target = "pot", "water"
 TRY = False
-NUM_LAYER = 3
+NUM_LAYER = 4
 INITIAL_GUESS = [
-    [2.0, 2.9, 0.1],
-    [0.5, 3.8, 0.5],
-    [0.5, 5.1, 0.5],
+    [4, 2.7, 0.1],
+    [1, 2.7, 0.5],
+    [1.0, 5, 0.5],
+    [1.0, 7, 0.5],
     [2, 8],
 ]
 INITIAL_GUESS = [item for sublist in INITIAL_GUESS for item in sublist]
@@ -131,8 +132,10 @@ if __name__ == "__main__":
     result = md.analyser.load_analyser_result(
         os.path.join(data_dir, "rdf-%s-%s.npz" % (ion, target))
     )
-    distance = result.data["bin_center"]
-    ref = result.data["mean"]
+    distance = result.data["r"]
+    ref = result.data["rdf"]
+    # distance = result.data["bin_center"]
+    # ref = result.data["mean"]
     if True:
         params = fit(distance, ref)
         save(json_file_path, params)

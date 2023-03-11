@@ -13,7 +13,6 @@ import cupy as cp
 from model import *
 from model.core import Grid, GridParser
 from model.exceptions import FileFormatError
-from mdpy.io import GridParser
 
 cur_dir = os.path.dirname(os.path.abspath(__file__))
 data_dir = os.path.join(cur_dir, "out")
@@ -29,12 +28,15 @@ class TestGridParser:
             constant_name_list=["epsilon0"],
         )
         phi = self.grid.empty_variable()
-        boundary_type = "d"
-        boundary_data = {
-            "index": cp.array([[1, 2, 3]], CUPY_INT),
-            "value": cp.array([1], CUPY_FLOAT),
-        }
-        phi.add_boundary(boundary_type=boundary_type, boundary_data=boundary_data)
+        field = cp.zeros(phi.shape)
+        value = cp.zeros(phi.shape)
+        field[1:-1, 1:-1] = 1
+        value[1:-1, 1:-1] = 2
+        index = cp.argwhere(field == 1)
+        phi.register_points(
+            type="inner", index=index, value=value[index[:, 0], index[:, 1]]
+        )
+        phi.register_points(type="dirichlet", index=cp.argwhere(field != 1))
         self.grid.add_variable("phi", phi)
         self.grid.add_field("epsilon", self.grid.zeros_field())
         self.grid.add_constant("epsilon0", 10)
@@ -63,23 +65,23 @@ class TestGridParser:
         assert cp.all(cp.isclose(grid.coordinate.x, self.grid.coordinate.x))
         assert cp.all(cp.isclose(grid.variable.phi.value, self.grid.variable.phi.value))
         assert (
-            grid.variable.phi.boundary["d"]["index"].dtype
-            == self.grid.variable.phi.boundary["d"]["index"].dtype
+            grid.variable.phi.points["inner"]["index"].dtype
+            == self.grid.variable.phi.points["inner"]["index"].dtype
         )
         assert cp.all(
             cp.isclose(
-                grid.variable.phi.boundary["d"]["index"],
-                self.grid.variable.phi.boundary["d"]["index"],
+                grid.variable.phi.points["inner"]["index"],
+                self.grid.variable.phi.points["inner"]["index"],
             )
         )
         assert (
-            grid.variable.phi.boundary["d"]["value"].dtype
-            == self.grid.variable.phi.boundary["d"]["value"].dtype
+            grid.variable.phi.points["inner"]["value"].dtype
+            == self.grid.variable.phi.points["inner"]["value"].dtype
         )
         assert cp.all(
             cp.isclose(
-                grid.variable.phi.boundary["d"]["value"],
-                self.grid.variable.phi.boundary["d"]["value"],
+                grid.variable.phi.points["inner"]["value"],
+                self.grid.variable.phi.points["inner"]["value"],
             )
         )
         assert cp.all(cp.isclose(grid.field.epsilon, self.grid.field.epsilon))

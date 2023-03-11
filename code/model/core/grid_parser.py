@@ -59,16 +59,14 @@ class GridParser:
             # Value
             variable.value = cp.array(handle[group_name + "value"][()], CUPY_FLOAT)
             # Boundary
-            group_name += "boundary/"  # /variable/name/boundary/
-            for boundary_type in handle[group_name].keys():
-                boundary_data = {}
-                boundary_group_name = group_name + boundary_type + "/"
-                for key in handle[boundary_group_name].keys():
-                    val = handle[boundary_group_name + key][()]
-                    boundary_data[key] = cp.array(val, val.dtype)
-                variable.add_boundary(
-                    boundary_type=boundary_type, boundary_data=boundary_data
-                )
+            group_name += "points/"  # /variable/name/boundary/
+            for point_type in handle[group_name].keys():
+                point_data = {}
+                point_group_name = group_name + point_type + "/"
+                for key in handle[point_group_name].keys():
+                    val = handle[point_group_name + key][()]
+                    point_data[key] = cp.array(val, val.dtype)
+                variable.register_points(type=point_type, **point_data)
             setattr(
                 sub_grid,
                 name,

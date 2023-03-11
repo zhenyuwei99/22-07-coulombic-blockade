@@ -18,17 +18,16 @@ from model import *
 from model.core import Grid
 
 
-def visualize_concentration(grid: Grid, ion_types, iteration=None):
-
+def visualize_concentration(
+    grid: Grid, ion_types, name=None, img_dir=None, is_save=True
+):
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    img_dir = os.path.join(cur_dir, "../out/solver/image")
-    if iteration is None:
+    if img_dir is None:
+        img_dir = os.path.join(cur_dir, "../out/solver/image")
+    if name is None:
         img_file_path = os.path.join(img_dir, "concentration.png")
     else:
-        img_file_path = os.path.join(
-            img_dir, "concentration-%s.png" % str(iteration).zfill(3)
-        )
-    print("Result save to", img_file_path)
+        img_file_path = os.path.join(img_dir, "%s.png" % str(name).zfill(3))
 
     num_ions = len(ion_types)
     cmap = "RdBu"
@@ -80,27 +79,22 @@ def visualize_concentration(grid: Grid, ion_types, iteration=None):
     cb2 = fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap), cax=position)
     cb2.ax.set_title("Density (mol/L)", fontsize=big_font)
     cb2.ax.tick_params(labelsize=mid_font)
-    plt.savefig(img_file_path)
-    plt.close()
+    if is_save:
+        print("Result save to", img_file_path)
+        plt.savefig(img_file_path)
+        plt.close()
 
 
 def visualize_flux(
-    grid: Grid,
-    pnpe_solver,
-    ion_types: list[str],
-    iteration=None,
-    img_file_path=None,
+    grid: Grid, pnpe_solver, ion_types: list[str], name=None, img_dir=None, is_save=True
 ):
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    img_dir = os.path.join(cur_dir, "../out/solver/image")
-    if img_file_path is None:
-        if iteration is None:
-            img_file_path = os.path.join(img_dir, "z-flux.png")
-        else:
-            img_file_path = os.path.join(
-                img_dir, "z-flux-%s.png" % str(iteration).zfill(3)
-            )
-    print("Result save to", img_file_path)
+    if img_dir is None:
+        img_dir = os.path.join(cur_dir, "../out/solver/image")
+    if name is None:
+        img_file_path = os.path.join(img_dir, "z-flux.png")
+    else:
+        img_file_path = os.path.join(img_dir, "%s.png" % str(name).zfill(3))
 
     # Analysis
     num_ions = len(ion_types)
@@ -111,7 +105,7 @@ def visualize_flux(
         .value
     )
     for solver, ion_type in zip(pnpe_solver.npe_solver_list, pnpe_solver.ion_types):
-        z = ION_DICT[ion_type]["val"]
+        z = ION_DICT[ion_type]["val"].value
         direction = -1 if z >= 0 else 1
         flux.append(solver.get_flux(1, direction) * convert)
 
@@ -126,26 +120,18 @@ def visualize_flux(
     norm = matplotlib.colors.Normalize(vmin=flux.min(), vmax=flux.max())
     index = flux.shape[1] // 2
     for i, j in enumerate(ion_types):
-        # for n in [-10, -5, 0, 5, 10]:
-        #     current = (
-        #         CUPY_FLOAT(np.pi * 2 * grid.grid_width**2)
-        #         * (r[:, index + n] + CUPY_FLOAT(grid.grid_width * 0.5))
-        #         * flux[i][:, index + n]
-        #     )
-        #     current = current.sum()
-        #     print(current, end=", ")
-        # print("")
+        val = ION_DICT[j]["val"].value
+        index = 20 if val < 0 else -20
+        # index = grid.shape[1] // 2
         current = (
-            CUPY_FLOAT(np.pi * 2 * grid.grid_width**2)
-            * (r[:, index] + CUPY_FLOAT(grid.grid_width * 0.5))
-            * flux[i][:, index]
+            CUPY_FLOAT(np.pi * 2 * grid.grid_width) * (r[:, index]) * flux[i][:, index]
         )
-        current = current.sum()
+        current = current.sum() * val
         c = ax[i].contour(r, z, flux[i], num_levels, norm=norm, cmap=cmap)
         ax[i].set_title(
             "%s z-current, current %.3e A" % (j, current), fontsize=big_font
         )
-        ax[i].set_xlabel(r"x ($\AA$)", fontsize=big_font)
+        ax[i].set_xlabel(r"r ($\AA$)", fontsize=big_font)
         ax[i].tick_params(labelsize=mid_font)
     fig.subplots_adjust(left=0.05, right=0.90)
     position = fig.add_axes([0.93, 0.10, 0.015, 0.80])  # 位置[左,下,右,上]
@@ -153,5 +139,18 @@ def visualize_flux(
     cb.ax.set_title(r"ampere/$A^2$", fontsize=big_font, rotation=90, x=-0.8, y=0.4)
     cb.ax.yaxis.get_offset_text().set(size=mid_font)
     cb.ax.tick_params(labelsize=mid_font)
-    plt.savefig(img_file_path)
-    plt.close()
+    if is_save:
+        print("Result save to", img_file_path)
+        plt.savefig(img_file_path)
+        plt.close()
+
+
+def get_z_flux(grid: Grid, ion_type, u):
+    rho = getattr(grid.variable, "rho_" + ion_type).value
+    d = getattr(grid.constant, "d_" + ion_type)
+    scaled_u = u * grid.constant.beta
+    inv_h = CUPY_FLOAT(1 / grid.grid_width)
+    flux = rho[1:-1, 2:] - rho[1:-1, 1:-1]
+    flux += rho[1:-1, 1:-1] * (scaled_u[1:-1, 2:] - scaled_u[1:-1, 1:-1])
+    flux *= inv_h * d
+    return flux

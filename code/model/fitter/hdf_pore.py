@@ -14,7 +14,7 @@ import os
 import mdpy as md
 import numpy as np
 from scipy import optimize
-from model.energy import HydrationDistributionFunction
+from model.potential import HydrationDistributionFunction
 
 
 def get_pore_distance(r, z, r0, z0, threshold=0.3):
@@ -89,7 +89,7 @@ if __name__ == "__main__":
     img_file_path = os.path.join(
         os.path.join(cur_dir, "../out/fitter/fitting_pore.png")
     )
-    target = "oxygen"
+    target = "hydrogen"
     json_file_path = os.path.join(out_dir, "%s-pore.json" % target)
 
     r0 = 12.864

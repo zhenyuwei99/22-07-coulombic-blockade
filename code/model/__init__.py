@@ -4,6 +4,7 @@ __email__ = "zhenyuwei99@gmail.com"
 __copyright__ = "Copyright 2021-2021, Southeast University and Zhenyu Wei"
 __license__ = "GPLv3"
 
+import torch
 import numba as nb
 import cupy as cp
 import numpy as np
@@ -12,25 +13,30 @@ from mdpy.utils import check_quantity_value
 
 CC_BOND_LENGTH = 1.418
 DIFFUSION_UNIT = default_length_unit**2 / default_time_unit
+MOBILITY_UNIT = default_length_unit**2 / default_time_unit / default_voltage_unit
 VAL_UNIT = default_charge_unit
 ION_DICT = {
     "k": {
         "d": Quantity(1.96e-9, meter**2 / second),
+        "mu": Quantity(7.62e-8, meter**2 / second / volt),
         "val": Quantity(1, elementary_charge),
         "name": "pot",
     },
     "na": {
         "d": Quantity(1.33e-9, meter**2 / second),
+        "mu": Quantity(5.19e-8, meter**2 / second / volt),
         "val": Quantity(1, elementary_charge),
         "name": "sod",
     },
     "ca": {
         "d": Quantity(0.79e-9, meter**2 / second),
+        "mu": Quantity(6.16e-8, meter**2 / second / volt),
         "val": Quantity(2, elementary_charge),
         "name": "carbon",
     },
     "cl": {
         "d": Quantity(2.03e-9, meter**2 / second),
+        "mu": Quantity(7.91e-8, meter**2 / second / volt),
         "val": Quantity(-1, elementary_charge),
         "name": "cla",
     },
@@ -70,54 +76,33 @@ NP_DENSITY_LOWER_THRESHOLD = (
     .value
 )
 
-precision = "single"
+PRECISION = "single"
 
 CUPY_BIT = cp.uint32
 NUMBA_BIT = nb.uint32
 NUMPY_BIT = np.uint32
 UNIT_FLOAT = np.float128
-if precision == "single":
+if PRECISION == "single":
     CUPY_FLOAT = cp.float32
     NUMBA_FLOAT = nb.float32
     NUMPY_FLOAT = np.float32
+    TORCH_FLOAT = torch.float32
     CUPY_INT = cp.int32
     NUMBA_INT = nb.int32
     NUMPY_INT = np.int32
+    TORCH_INT = torch.int32
     CUPY_UINT = cp.uint32
     NUMBA_UINT = nb.uint32
     NUMPY_UINT = np.uint32
-elif precision == "double":
+elif PRECISION == "double":
     CUPY_FLOAT = cp.float64
     NUMBA_FLOAT = nb.float64
     NUMPY_FLOAT = np.float64
+    TORCH_FLOAT = torch.float64
     CUPY_INT = cp.int64
     NUMBA_INT = nb.int64
     NUMPY_INT = np.int64
+    TORCH_INT = torch.int64
     CUPY_UINT = cp.uint64
     NUMBA_UINT = nb.uint64
     NUMPY_UINT = np.uint64
-
-
-def generate_name(ion_types, r0, z0, zs, w0, rho, grid_width, voltage, is_pnp):
-    """
-    - `ion_types` (list[str]): list of ion types
-    - `r0` (Quantity or float): The radius of pore, if float in unit of angstrom
-    - `z0` (Quantity or float): The half-thickness of pore, if float in unit of angstrom
-    - `zs` (Quantity or float): The thickness of solvent above the pore, if float in unit of angstrom
-    - `w0` (Quantity or float): The width of pore, if float in unit of angstrom
-    - `grid_width` (Quantity or float): The grid width, if float in unit of angstrom
-    - `rho` (Quantity or float): The bulk density of solution, if float in unit of mol/L
-    - `voltage` (Quantity or float): The external voltage, if float in unit of V
-    - `is_pnp` (bool): Bool value for including external potential or not. True: not include
-    """
-    name = ["pnp" if is_pnp else "mpnp"]
-    name.extend(ion_types)
-    name.append("%.2fmolPerL" % check_quantity_value(rho, mol / decimeter**3))
-    name.append("r0-%.2fA" % check_quantity_value(r0, angstrom))
-    name.append("z0-%.2fA" % check_quantity_value(z0, angstrom))
-    name.append("zs-%.2fA" % check_quantity_value(zs, angstrom))
-    name.append("w0-%.2fA" % check_quantity_value(w0, angstrom))
-    name.append("h-%.2fA" % check_quantity_value(grid_width, angstrom))
-    name.append("%.2fV" % check_quantity_value(voltage, volt))
-    name = "-".join(name)
-    return name

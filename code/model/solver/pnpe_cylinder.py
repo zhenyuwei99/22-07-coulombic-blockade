@@ -11,12 +11,11 @@ copyright : (C)Copyright 2021-2021, Zhenyu Wei and Southeast University
 
 import numpy as np
 import cupy as cp
-from mdpy.utils import check_quantity_value, check_quantity
+from mdpy.utils import check_quantity_value
 from mdpy.unit import *
 
 from model import *
 from model.core import Grid
-from model.solver.utils import *
 from model.solver.pe_cylinder import PECylinderSolver
 from model.solver.npe_cylinder import NPECylinderSolver
 
@@ -45,6 +44,7 @@ class PNPECylinderSolver:
         ### Field:
         - epsilon: Relative permittivity
         - rho: Fixed charge density
+        - rho_fixed: Fixed charge density
         - u_[ion]: External potential of [ion]
         - u_s: Steric potential
 
@@ -59,6 +59,7 @@ class PNPECylinderSolver:
         self._grid = grid
         self._ion_types = ion_types
         self._grid.add_requirement("field", "u_s")
+        self._grid.add_requirement("field", "rho_fixed")
         for ion_type in ion_types:
             self._grid.add_requirement("constant", "r_%s" % ion_type)
             self._grid.add_requirement("constant", "z_%s" % ion_type)
@@ -87,6 +88,7 @@ class PNPECylinderSolver:
             self._grid.field.rho += (
                 CUPY_FLOAT(z) * getattr(self.grid.variable, "rho_%s" % ion_type).value
             )
+        self._grid.field.rho += self._grid.field.rho_fixed
 
     def _update_u_s(self):
         self._grid.field.u_s = self._grid.zeros_field(CUPY_FLOAT)
@@ -107,20 +109,48 @@ class PNPECylinderSolver:
         # Electric energy
         u += CUPY_FLOAT(z) * self._grid.variable.phi.value
         # Steric energy
-        u += self._grid.field.u_s
+        # u += self._grid.field.u_s
         setattr(self._grid.field, "u_%s" % ion_type, u.astype(CUPY_FLOAT))
+
+    # def iterate(self, num_iterations, num_sub_iterations=100, is_restart=False):
+    #     self._grid.check_requirement()
+    #     for iterations in range(num_iterations):
+    #         self._pre_res = []
+    #         self._pre_res.append(self._grid.variable.phi.value)
+    #         # target = (
+    #         #     self._ion_types[::-1] if iterations % 2 == 0 else self._ion_types[:]
+    #         # )
+    #         target = self._ion_types  # if iterations % 10 <= 5 else self._ion_types[:]
+    #         for index, ion_type in enumerate(target):
+    #             self._update_rho()
+    #             self._update_u_s()
+    #             self._pe_solver.iterate(
+    #                 num_iterations=num_sub_iterations, is_restart=is_restart
+    #             )
+    #             self._update_u_ion(ion_type=ion_type)
+    #             self._pre_res.append(
+    #                 getattr(self._grid.variable, "rho_%s" % ion_type).value
+    #             )
+    #             self._npe_solver_list[index].iterate(
+    #                 num_iterations=num_sub_iterations, is_restart=is_restart
+    #             )
+    #         print(self.residual)
+    #     for ion_type in self._ion_types:
+    #         self._update_u_ion(ion_type=ion_type)
 
     def iterate(self, num_iterations, num_sub_iterations=100, is_restart=False):
         self._grid.check_requirement()
+        # Initial diffusion
         for iterations in range(num_iterations):
             self._pre_res = []
             self._pre_res.append(self._grid.variable.phi.value)
-            for index, ion_type in enumerate(self._ion_types):
-                self._update_rho()
-                self._update_u_s()
-                self._pe_solver.iterate(
-                    num_iterations=num_sub_iterations, is_restart=is_restart
-                )
+            self._pe_solver.iterate(num_iterations=5000, is_restart=is_restart)
+            target = (
+                self._ion_types[::-1] if iterations % 2 == 5 else self._ion_types[:]
+            )
+            target = self._ion_types
+            for index, ion_type in enumerate(target):
+                # self._update_u_s()
                 self._update_u_ion(ion_type=ion_type)
                 self._pre_res.append(
                     getattr(self._grid.variable, "rho_%s" % ion_type).value
@@ -128,7 +158,21 @@ class PNPECylinderSolver:
                 self._npe_solver_list[index].iterate(
                     num_iterations=num_sub_iterations, is_restart=is_restart
                 )
+            self._update_rho()
+            self._update_u_s()
             print(self.residual)
+        for ion_type in self._ion_types:
+            self._update_u_ion(ion_type=ion_type)
+
+    def _iterate_single_ion(self, ion_type: str, num_sub_iterations):
+        index = self._ion_types.index(ion_type)
+        solver = self._npe_solver_list[index]
+        print(index)
+        for i in range(5):
+            self._update_rho()
+            self._pe_solver.iterate(num_iterations=num_sub_iterations, is_restart=True)
+            self._update_u_ion(ion_type=ion_type)
+            solver.iterate(num_iterations=num_sub_iterations, is_restart=True)
 
     @property
     def grid(self) -> Grid:
@@ -156,199 +200,3 @@ class PNPECylinderSolver:
         for i, j in zip(self._pre_res, self._cur_res):
             residual += cp.abs(i - j).mean()
         return residual
-
-
-def get_distance_and_vector(r, z, r0, z0, rs):
-    r0s = r0 + rs
-    z0s = z0 - rs
-    r = grid.coordinate.r
-    z = grid.coordinate.z
-    dist = grid.zeros_field(CUPY_FLOAT) - 1
-    vector = cp.zeros(grid.shape + [2], CUPY_FLOAT)
-    # In pore
-    index = (cp.abs(z) <= z0s) & (r <= r0)
-    dist[index] = r0 - r[index]
-    vector[index, 0] = 1
-    vector[index, 1] = 0
-    # Out pore
-    index = (z >= z0) & (r >= r0s)
-    dist[index] = z[index] - z0
-    vector[index, 0] = 0
-    vector[index, 1] = -1
-    index = (z <= -z0) & (r >= r0s)
-    dist[index] = -(z[index] + z0)
-    vector[index, 0] = 0
-    vector[index, 1] = 1
-    # Sphere part
-    index = (z > z0s) & (r < r0s)
-    temp = cp.sqrt((z[index] - z0s) ** 2 + (r[index] - r0s) ** 2) - rs
-    temp[temp < 0] = -1
-    dist[index] = temp
-    vector[index, 0] = z[index] - z0s
-    vector[index, 1] = r[index] - r0s
-    index = (z < -z0s) & (r < r0s)
-    temp = cp.sqrt((z[index] + z0s) ** 2 + (r[index] - r0s) ** 2) - rs
-    temp[temp < 0] = -1
-    dist[index] = temp
-    vector[index, 0] = z[index] + z0s
-    vector[index, 1] = r[index] - r0s
-    # Norm
-    norm = cp.sqrt(vector[:, :, 0] ** 2 + vector[:, :, 1] ** 2)
-    vector[:, :, 0] /= norm
-    vector[:, :, 1] /= norm
-    return dist.astype(CUPY_FLOAT), vector.astype(CUPY_FLOAT)
-
-
-def get_phi(grid: Grid, voltage):
-    phi = grid.empty_variable()
-    voltage = check_quantity_value(voltage, volt)
-    voltage = (
-        Quantity(voltage, volt * elementary_charge)
-        .convert_to(default_energy_unit)
-        .value
-    )
-    field = (grid.zeros_field() - 1).astype(CUPY_INT)
-    value = grid.zeros_field().astype(CUPY_FLOAT)
-    dimension = grid.zeros_field().astype(CUPY_INT)
-    direction = grid.zeros_field().astype(CUPY_INT)
-    # 0: inner; 1: dirichlet; 2: no-gradient; 3: axial-symmetry
-    # Inner
-    field[1:-1, 1:-1] = 0
-    index = cp.argwhere(field).astype(CUPY_INT)
-    # Dirichlet
-    field[:, 0] = 1  # down
-    value[:, 0] = voltage * -0.5
-    field[:, -1] = 1  # up
-    value[:, -1] = voltage * 0.5
-    # no-gradient
-    field[-1, 1:-1] = 2  # right
-    dimension[-1, 1:-1] = 0
-    direction[-1, 1:-1] = -1
-    # axial symmetry
-    field[0, 1:-1] = 3  # left
-    # Register
-    index = cp.argwhere(field == 0).astype(CUPY_INT)
-    phi.register_points(
-        type="inner",
-        index=index,
-    )
-    index = cp.argwhere(field == 1).astype(CUPY_INT)
-    phi.register_points(
-        type="dirichlet",
-        index=index,
-        value=value[index[:, 0], index[:, 1]],
-    )
-    index = cp.argwhere(field == 2).astype(CUPY_INT)
-    phi.register_points(
-        type="no-gradient",
-        index=index,
-        dimension=dimension[index[:, 0], index[:, 1]],
-        direction=direction[index[:, 0], index[:, 1]],
-    )
-    index = cp.argwhere(field == 3).astype(CUPY_INT)
-    phi.register_points(type="axial-symmetry", index=index)
-    return phi
-
-
-def get_rho(grid: Grid, density, dist, vector):
-    density = check_quantity(density, mol / decimeter**3) * NA
-    density = check_quantity_value(density, 1 / default_length_unit**3)
-    rho = grid.empty_variable()
-    field = grid.zeros_field().astype(CUPY_INT) - 1
-    value = grid.zeros_field().astype(CUPY_FLOAT)
-    direction = grid.zeros_field().astype(CUPY_INT)
-    unit_vec = cp.zeros(grid.shape + [2], CUPY_FLOAT)
-    # 0: inner; 1: dirichlet; 2: axial-symmetry; 3: z-no-flux;
-    # 4: r-no-flux; 5: no-flux; 6: r-no-flux-inner
-    r = grid.coordinate.r
-    z = grid.coordinate.z
-    index = cp.argwhere((r > r0) & (z < z0) & (z > -z0))
-    # Inner
-    field[1:-1, 1:-1] = 0
-
-    # no-flux
-    index = dist == 0
-    field[index] = 3
-    unit_vec[index, 0] = vector[index, 0]
-    unit_vec[index, 1] = vector[index, 1]
-
-    # dirichlet
-    field[:, [0, -1]] = 1
-    value[:, [0, -1]] = density
-    index = dist == -1
-    field[index] = 1
-    value[index] = 0
-
-    # axial-symmetry
-    field[0, 1:-1] = 2
-    direction[0, 1:-1] = 1
-
-    # r-no-flux
-    field[-1, 1:-1] = 4
-    direction[-1, 1:-1] = -1
-
-    index = cp.argwhere(field == 0).astype(CUPY_INT)
-    rho.register_points(
-        type="inner",
-        index=index,
-    )
-    index = cp.argwhere(field == 1).astype(CUPY_INT)
-    rho.register_points(
-        type="dirichlet",
-        index=index,
-        value=value[index[:, 0], index[:, 1]],
-    )
-    index = cp.argwhere(field == 2).astype(CUPY_INT)
-    rho.register_points(type="axial-symmetry", index=index)
-    index = cp.argwhere(field == 3).astype(CUPY_INT)
-    rho.register_points(
-        type="no-flux-inner",
-        index=index,
-        unit_vec=unit_vec[index[:, 0], index[:, 1]],
-    )
-    index = cp.argwhere(field == 4).astype(CUPY_INT)
-    rho.register_points(
-        type="r-no-flux",
-        index=index,
-        direction=direction[index[:, 0], index[:, 1]],
-    )
-    return rho
-
-
-def get_epsilon(grid: Grid, dist):
-    epsilon = grid.ones_field() * CUPY_FLOAT(78)
-    epsilon[dist == -1] = 2
-    return epsilon.astype(CUPY_FLOAT)
-
-
-if __name__ == "__main__":
-    r0, z0, rs = 8.15, 25, 5
-    voltage = Quantity(1.0, volt)
-    density = Quantity(0.15, mol / decimeter**3)
-    beta = (Quantity(300, kelvin) * KB).convert_to(default_energy_unit).value
-    beta = 1 / beta
-    ion_types = ["cl", "k"]
-    grid = Grid(grid_width=0.25, r=[0, 50], z=[-100, 100])
-    dist, vector = get_distance_and_vector(
-        grid.coordinate.r, grid.coordinate.z, r0, z0, rs
-    )
-
-    solver = PNPECylinderSolver(grid=grid, ion_types=ion_types)
-    solver.npe_solver_list[0].is_inverse = True
-    grid.add_variable("phi", get_phi(grid, voltage=voltage))
-    grid.add_field("epsilon", get_epsilon(grid, dist))
-    grid.add_field("rho", grid.zeros_field(CUPY_FLOAT))
-    grid.add_field("u_s", grid.zeros_field(CUPY_FLOAT))
-    for ion_type in ion_types:
-        grid.add_variable("rho_%s" % ion_type, get_rho(grid, density, dist, vector))
-        grid.add_field("u_%s" % ion_type, grid.zeros_field(CUPY_FLOAT))
-    grid.add_constant("beta", beta)
-
-    solver.iterate(5, 5000, is_restart=True)
-    visualize_concentration(grid, ion_types=ion_types, iteration="test")
-    visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, iteration="test")
-    # for i in range(100):
-    #     print("Iteration", i)
-    #     solver.iterate(10, 5000, is_restart=True)
-    #     visualize_concentration(grid, ion_types=ion_types, iteration=i)
-    #     visualize_flux(grid, pnpe_solver=solver, ion_types=ion_types, iteration=i)
