@@ -47,6 +47,10 @@ def check_dir(dir_path: str, restart=False):
     return dir_path
 
 
+def get_cnt_radius(m, n):
+    return 2.46 * np.sqrt((m + n) ** 2 - m * n) / (2 * np.pi)
+
+
 def get_pore_distance_cylinder(r, z, r0, z0, rs):
     r0s = r0 + rs
     z0s = z0 - rs

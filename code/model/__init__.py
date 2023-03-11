@@ -13,25 +13,30 @@ from mdpy.utils import check_quantity_value
 
 CC_BOND_LENGTH = 1.418
 DIFFUSION_UNIT = default_length_unit**2 / default_time_unit
+MOBILITY_UNIT = default_length_unit**2 / default_time_unit / default_voltage_unit
 VAL_UNIT = default_charge_unit
 ION_DICT = {
     "k": {
         "d": Quantity(1.96e-9, meter**2 / second),
+        "mu": Quantity(7.62e-8, meter**2 / second / volt),
         "val": Quantity(1, elementary_charge),
         "name": "pot",
     },
     "na": {
         "d": Quantity(1.33e-9, meter**2 / second),
+        "mu": Quantity(5.19e-8, meter**2 / second / volt),
         "val": Quantity(1, elementary_charge),
         "name": "sod",
     },
     "ca": {
         "d": Quantity(0.79e-9, meter**2 / second),
+        "mu": Quantity(6.16e-8, meter**2 / second / volt),
         "val": Quantity(2, elementary_charge),
         "name": "carbon",
     },
     "cl": {
         "d": Quantity(2.03e-9, meter**2 / second),
+        "mu": Quantity(7.91e-8, meter**2 / second / volt),
         "val": Quantity(-1, elementary_charge),
         "name": "cla",
     },
@@ -71,13 +76,13 @@ NP_DENSITY_LOWER_THRESHOLD = (
     .value
 )
 
-precision = "double"
+PRECISION = "single"
 
 CUPY_BIT = cp.uint32
 NUMBA_BIT = nb.uint32
 NUMPY_BIT = np.uint32
 UNIT_FLOAT = np.float128
-if precision == "single":
+if PRECISION == "single":
     CUPY_FLOAT = cp.float32
     NUMBA_FLOAT = nb.float32
     NUMPY_FLOAT = np.float32
@@ -89,7 +94,7 @@ if precision == "single":
     CUPY_UINT = cp.uint32
     NUMBA_UINT = nb.uint32
     NUMPY_UINT = np.uint32
-elif precision == "double":
+elif PRECISION == "double":
     CUPY_FLOAT = cp.float64
     NUMBA_FLOAT = nb.float64
     NUMPY_FLOAT = np.float64
