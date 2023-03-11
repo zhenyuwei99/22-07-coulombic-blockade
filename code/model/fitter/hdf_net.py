@@ -47,7 +47,7 @@ class HDFNetFitter:
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    target = "sod"
+    target = "pore"
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(cur_dir, "../data/hdf")
     img_file_path = os.path.join(os.path.join(cur_dir, "../out/fitter/fitting_ion.png"))
@@ -69,10 +69,10 @@ if __name__ == "__main__":
     else:
         net = tc.load(net_file_path)
 
-    r_new = np.arange(0, 25, 0.1)
+    r_new = np.arange(0, 12, 0.1)
     pred = net(tc.tensor(r_new, device=net.device, dtype=TORCH_FLOAT).reshape(-1, 1))
 
-    plt.plot(r, rdf, ".-")
+    # plt.plot(r, rdf, ".-")
     plt.plot(r_new, pred.detach().cpu().numpy(), ".-")
     plt.show()
 
